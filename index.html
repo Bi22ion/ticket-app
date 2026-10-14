@@ -1192,9 +1192,9 @@ function app(){
     async guestInit(){
       if(!sb){ this.gErr='Could not load this ticket. Check your connection.'; return; }
       try{
-        const [t,d]=await Promise.all([sb.rpc('digital_ticket',{p_number:this.guest.number.toUpperCase(),p_code:this.guest.code.toUpperCase()}),sb.rpc('public_design')]);
+        const [t,d]=await Promise.all([sb.from('tickets').select('number, tier, code, buyer, status, created_at, used_at, printed, shared').eq('number',this.guest.number.toUpperCase()).single(),sb.rpc('public_design')]);
         if(t.error) throw t.error;
-        if(!t.data){ this.gErr='This ticket link is not valid.'; return; }
+        if(!t.data||t.data.code.toUpperCase()!==this.guest.code.toUpperCase()){ this.gErr='This ticket link is not valid.'; return; }
         if(d.data) this.tpl=this.mergeTpl(d.data);
         this.gt={...t.data,buyer:t.data.buyer||''};
       }catch(e){ this.gErr='Could not load this ticket. Check your connection and try again.'; }
