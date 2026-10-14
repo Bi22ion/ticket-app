@@ -1,0 +1,1267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kivvulu — Ticket Studio</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;500;700;900&family=Poppins:wght@300;500;700;900&family=Inter:wght@300;500;700;900&family=Oswald:wght@300;500;700&family=Playfair+Display:wght@400;500;700;900&family=Cinzel:wght@400;500;700;900&family=Space+Grotesk:wght@300;500;700&display=swap">
+<style type="text/tailwindcss">
+@layer components{
+ .btn{@apply rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-medium hover:bg-stone-100 disabled:opacity-50}
+ .btn-dark{@apply rounded-lg bg-[#1b2430] px-4 py-2 text-sm font-medium text-white hover:bg-[#2c3a4d] disabled:opacity-50}
+ .btn-red{@apply rounded-lg border border-rose-300 bg-white px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50}
+ .inp{@apply w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm}
+ .card{@apply rounded-xl border border-stone-300 bg-white p-4}
+ .lbl{@apply block text-sm text-stone-700}
+ .dbtn{@apply rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-stone-200 transition-all duration-300 hover:bg-white/10 hover:-translate-y-px active:scale-95}
+ .dinp{@apply w-full rounded-lg border border-white/10 bg-[#1b1e26] px-3 py-2 text-sm text-stone-100}
+ .dlbl{@apply block text-xs text-stone-400}
+}
+</style>
+<style>
+ [x-cloak]{display:none!important}
+ .dz input[type=range]{accent-color:#38bdf8;width:100%;margin-top:.35rem}
+ .dz input[type=color]{background:transparent;border:1px solid rgba(255,255,255,.1);padding:2px;cursor:pointer}
+ .ed:hover{outline:1px dashed #38bdf8;outline-offset:2px;cursor:move}
+ [data-tip]{position:relative}
+ [data-tip]:hover::after{content:attr(data-tip);position:absolute;top:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#000;color:#fff;font-size:11px;padding:3px 8px;border-radius:6px;white-space:nowrap;z-index:30;pointer-events:none}
+ body{font-family:Georgia,"Iowan Old Style",serif;background:#f3f1ec;color:#1b2430}
+ .ui{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+ :focus-visible{outline:3px solid #1d4ed8;outline-offset:2px}
+ #reader video{border-radius:.75rem;width:100%!important;object-fit:cover}
+ #reader{border:none!important}
+ #printArea{display:none}
+ .sheet{display:grid;gap:4mm;justify-content:center;align-content:start;break-after:page}
+ .sheet:last-child{break-after:auto}
+ .cell{outline:.2mm dashed #aaa}
+ @media print{
+  body>*:not(#printArea){display:none!important}
+  #printArea{display:block!important}
+  body{background:#fff}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+ }
+</style>
+</head>
+<body x-data="app()" x-init="init()" @pointermove.window="dragMove($event)" @pointerup.window="dragEnd()" @keydown.enter.window="if(result) nextScan()">
+<style x-text="`@page{size:${paper};margin:10mm}`"></style>
+
+<header x-show="user&&!guest" x-cloak class="bg-[#1b2430] text-white ui">
+  <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+    <h1 class="text-2xl tracking-tight">Gatekeeper</h1>
+    <div class="flex items-center gap-2 ml-auto text-xs">
+      <span class="hidden sm:inline text-white/60" x-text="(user?user.username+' · ':'')+roleLabel"></span>
+      <button @click="syncNow()" title="Tap to sync now" class="flex items-center gap-1.5 bg-white/10 hover:bg-white/20 transition-colors rounded-full px-3 py-1.5">
+        <span class="w-2 h-2 rounded-full" :class="cloud==='live'?'bg-emerald-400':cloud==='sync'?'bg-amber-400 animate-pulse':'bg-rose-400'"></span>
+        <span x-text="cloudLabel"></span></button>
+      <button @click="logout()" class="bg-white/10 hover:bg-rose-500/40 transition-colors rounded-full px-3 py-1.5">Logout</button>
+    </div>
+    <nav x-show="tabs.length>1" class="flex gap-1 bg-white/10 rounded-lg p-1 overflow-x-auto" role="tablist">
+      <template x-for="[id,label] in tabs" :key="id">
+        <button role="tab" :aria-selected="tab===id" @click="tab=id" class="px-4 py-2 rounded-md text-sm font-medium whitespace-nowrap" :class="tab===id?'bg-white text-[#1b2430]':'text-white/80 hover:text-white'" x-text="label"></button>
+      </template>
+    </nav>
+  </div>
+</header>
+
+<main x-show="user&&!guest" x-cloak class="max-w-6xl mx-auto px-4 py-6 ui">
+
+<!-- DESIGN -->
+<section x-show="tab==='design'" x-cloak class="dz rounded-2xl bg-[#0f1115] p-3 lg:p-4 grid lg:grid-cols-[1fr_370px] gap-4 text-stone-200">
+  <div class="min-w-0">
+    <div class="flex flex-wrap items-center gap-2 mb-3">
+      <div class="flex rounded-lg bg-white/5 p-1 mr-auto">
+        <template x-for="[v,l,tip] in [['edit','Edit','Drag, scale and snap elements'],['3d','3D preview','Tilt the card like a printed ticket']]" :key="v">
+          <button :data-tip="tip" @click="view=v" class="px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-300" :class="view===v?'bg-sky-500 text-white shadow':'text-stone-400 hover:text-white'" x-text="l"></button>
+        </template>
+      </div>
+      <select x-model="pTier" class="dinp !w-auto" aria-label="Preview tier"><option>Ordinary</option><option>VIP</option><option>VVIP</option></select>
+      <input x-model="pName" class="dinp !w-40" placeholder="Sample name" aria-label="Sample name">
+    </div>
+    <div class="rounded-xl p-4 sm:p-8 min-h-[320px] flex items-center justify-center" style="background-color:#12151b;background-image:radial-gradient(#2a2f3a 1px,transparent 1px);background-size:18px 18px">
+      <div x-show="view==='edit'" class="w-full">
+        <div x-ref="canvas" @pointerdown="dragStart($event)" x-html="ticketHTML(sample,true,true)" class="mx-auto select-none" :style="{'max-width':maxW}"></div>
+      </div>
+      <div x-show="view==='3d'" x-cloak class="w-full" style="perspective:1400px" @pointermove="tiltMove($event)" @pointerleave="tiltReset()">
+        <div class="mx-auto relative transition-transform duration-200 ease-out" :style="{'max-width':maxW,'container-type':'inline-size','transform-style':'preserve-3d',transform:`rotateX(${tilt.rx}deg) rotateY(${tilt.ry}deg)`}">
+          <div x-html="ticketHTML(sample,false,true)"></div>
+          <div class="absolute inset-0 pointer-events-none" :style="{'border-radius':tpl.radius+'cqw',background:`radial-gradient(circle at ${tilt.gx}% ${tilt.gy}%,rgba(255,255,255,.3),transparent 55%)`}"></div>
+        </div>
+      </div>
+    </div>
+    <p class="text-xs text-stone-500 mt-3" x-text="view==='edit'?'Drag an element to move it. Pink guides show snapping. Pull the blue corner handle to scale the selected element.':'Move your pointer over the card to tilt it. This is how the printed ticket will look.'"></p>
+  </div>
+
+  <aside class="rounded-xl bg-[#171a21] border border-white/10 overflow-hidden flex flex-col">
+    <div class="flex border-b border-white/10 overflow-x-auto">
+      <template x-for="[id,ic,l] in [['canvas','▭','Canvas'],['type','Aa','Type'],['brand','◈','Brand'],['layers','☰','Layers'],['presets','✦','Presets']]" :key="id">
+        <button @click="dTab=id" :title="l" class="flex-1 min-w-[66px] py-3 text-xs transition-all duration-300 border-b-2" :class="dTab===id?'border-sky-400 text-sky-300 bg-white/5':'border-transparent text-stone-400 hover:text-stone-200'"><div class="text-base leading-none mb-1" x-text="ic"></div><span x-text="l"></span></button>
+      </template>
+    </div>
+    <div class="p-4 overflow-y-auto max-h-[72vh] space-y-4">
+
+      <!-- Canvas -->
+      <div x-show="dTab==='canvas'" x-transition.opacity.duration.300ms class="space-y-4">
+        <div>
+          <div class="dlbl mb-1">Ticket shape</div>
+          <div class="grid grid-cols-3 gap-1.5">
+            <template x-for="[w,h,l] in [[2,1,'Landscape 2:1'],[1,1,'Square 1:1'],[1,2,'Portrait 1:2']]" :key="l">
+              <button class="dbtn !px-1" :class="tpl.aw/tpl.ah===w/h&&'!bg-sky-500/30 !border-sky-400'" @click="tpl.aw=w;tpl.ah=h" x-text="l"></button>
+            </template>
+          </div>
+          <div class="flex items-center gap-2 mt-2"><span class="dlbl">Custom</span>
+            <input type="number" min="1" max="20" step="0.5" x-model.number="tpl.aw" class="dinp !w-16" aria-label="Width ratio"><span>:</span>
+            <input type="number" min="1" max="20" step="0.5" x-model.number="tpl.ah" class="dinp !w-16" aria-label="Height ratio"></div>
+        </div>
+        <template x-for="[k,l,mn,mx,st] in [['radius','Corner radius',0,12,.5],['shadow','Card shadow',0,100,1],['blur','Background blur',0,6,.1],['bgOp','Image opacity',0,1,.05],['gOp','Overlay opacity',0,1,.05]]" :key="k">
+          <label class="dlbl"><span x-text="l"></span><span class="float-right text-stone-300" x-text="tpl[k]"></span>
+            <input type="range" :min="mn" :max="mx" :step="st" x-model.number="tpl[k]"></label>
+        </template>
+        <div>
+          <div class="dlbl mb-1">Gradient overlay</div>
+          <div class="grid grid-cols-3 gap-1.5">
+            <template x-for="[v,l] in [['none','None'],['linear','Linear'],['radial','Radial']]" :key="v">
+              <button class="dbtn" :class="tpl.gType===v&&'!bg-sky-500/30 !border-sky-400'" @click="tpl.gType=v" x-text="l"></button>
+            </template>
+          </div>
+          <div x-show="tpl.gType!=='none'" class="flex gap-2 mt-2">
+            <input type="color" x-model="tpl.g1" class="h-9 flex-1 rounded" aria-label="Gradient start colour">
+            <input type="color" x-model="tpl.g2" class="h-9 flex-1 rounded" aria-label="Gradient end colour"></div>
+          <label x-show="tpl.gType==='linear'" class="dlbl mt-2">Angle <span class="float-right text-stone-300" x-text="tpl.gAngle+'°'"></span>
+            <input type="range" min="0" max="360" x-model.number="tpl.gAngle"></label>
+        </div>
+        <label class="dlbl">Base colour <input type="color" x-model="tpl.bgColor" class="mt-1 h-9 w-full rounded"></label>
+      </div>
+
+      <!-- Type -->
+      <div x-show="dTab==='type'" x-transition.opacity.duration.300ms class="space-y-4">
+        <div class="flex flex-wrap gap-1.5">
+          <template x-for="k in ['title','tier','name','serial']" :key="k">
+            <button class="dbtn" :class="selKey===k&&'!bg-sky-500/30 !border-sky-400'" @click="selKey=k" x-text="tpl.el[k].label"></button>
+          </template>
+        </div>
+        <p x-show="!(cur&&isText(selKey))" class="text-sm text-stone-400">Choose a text element above, or click one on the canvas.</p>
+        <template x-if="cur&&isText(selKey)">
+          <div class="space-y-4">
+            <label class="dlbl">Font
+              <select x-model="cur.font" class="dinp mt-1"><option>Montserrat</option><option>Poppins</option><option>Inter</option><option>Oswald</option><option>Playfair Display</option><option>Cinzel</option><option>Space Grotesk</option><option>Monospace</option></select></label>
+            <label class="dlbl">Font size <span class="float-right text-stone-300" x-text="cur.size"></span><input type="range" min="1.5" max="25" step="0.5" x-model.number="cur.size"></label>
+            <div><div class="dlbl mb-1">Weight</div><div class="grid grid-cols-4 gap-1.5">
+              <template x-for="[v,l] in [[300,'Light'],[500,'Medium'],[700,'Bold'],[900,'Black']]" :key="v">
+                <button class="dbtn !px-1" :class="cur.weight===v&&'!bg-sky-500/30 !border-sky-400'" @click="cur.weight=v" x-text="l"></button></template></div></div>
+            <div class="grid grid-cols-2 gap-3">
+              <div><div class="dlbl mb-1">Align</div><div class="flex gap-1">
+                <template x-for="[v,l] in [['left','Left'],['center','Centre'],['right','Right']]" :key="v">
+                  <button class="dbtn flex-1 !px-1" :title="l" :class="cur.align===v&&'!bg-sky-500/30 !border-sky-400'" @click="cur.align=v" x-text="l[0]"></button></template></div></div>
+              <div><div class="dlbl mb-1">Case</div><div class="flex gap-1">
+                <template x-for="[v,l,t] in [['none','Aa','As typed'],['uppercase','AA','Uppercase'],['capitalize','Ab','Capitalize']]" :key="v">
+                  <button class="dbtn flex-1 !px-1" :title="t" :class="cur.transform===v&&'!bg-sky-500/30 !border-sky-400'" @click="cur.transform=v" x-text="l"></button></template></div></div>
+            </div>
+            <label class="dlbl">Letter spacing <span class="float-right text-stone-300" x-text="cur.ls"></span><input type="range" min="-0.05" max="0.5" step="0.01" x-model.number="cur.ls"></label>
+            <label class="dlbl">Shadow / glow <span class="float-right text-stone-300" x-text="cur.sh"></span><input type="range" min="0" max="4" step="0.5" x-model.number="cur.sh"></label>
+            <div class="flex gap-3">
+              <label class="dlbl flex-1">Text colour <input type="color" x-model="cur.color" class="mt-1 h-9 w-full rounded"></label>
+              <label class="dlbl flex-1">Shadow colour <input type="color" x-model="cur.shc" class="mt-1 h-9 w-full rounded"></label></div>
+          </div>
+        </template>
+      </div>
+
+      <!-- Brand -->
+      <div x-show="dTab==='brand'" x-transition.opacity.duration.300ms class="space-y-4">
+        <label class="dlbl">Event title <input x-model="tpl.eventTitle" class="dinp mt-1"></label>
+        <div>
+          <div class="dlbl mb-1">Background artwork</div>
+          <div class="flex gap-2">
+            <label class="dbtn flex-1 text-center cursor-pointer">Upload image<input type="file" accept="image/*" class="hidden" @change="uploadImg($event,'bg',2000,'image/jpeg')"></label>
+            <button class="dbtn" x-show="tpl.bg" @click="tpl.bg=''">Remove</button></div>
+          <div x-show="tpl.bg" class="mt-2 h-16 rounded-lg bg-cover bg-center border border-white/10" :style="{'background-image':`url(${tpl.bg})`}"></div>
+        </div>
+        <div>
+          <div class="dlbl mb-1">Logo or sponsor badge</div>
+          <div class="flex gap-2">
+            <label class="dbtn flex-1 text-center cursor-pointer">Upload logo<input type="file" accept="image/*" class="hidden" @change="uploadImg($event,'logo',600,'image/png');selKey='logo'"></label>
+            <button class="dbtn" x-show="tpl.logo" @click="tpl.logo=''">Remove</button></div>
+          <p class="text-xs text-stone-500 mt-1">PNG with a transparent background works best. Position it on the canvas or in Layers.</p>
+        </div>
+      </div>
+
+      <!-- Layers -->
+      <div x-show="dTab==='layers'" x-transition.opacity.duration.300ms class="space-y-2">
+        <template x-for="k in [...tpl.order].reverse()" :key="k">
+          <div @click="selKey=k" class="flex items-center gap-2 rounded-lg border px-2 py-2 cursor-pointer transition-all duration-300" :class="selKey===k?'border-sky-400 bg-sky-500/10':'border-white/10 hover:bg-white/5'">
+            <input type="checkbox" x-model="tpl.el[k].show" @click.stop :aria-label="'Show '+tpl.el[k].label">
+            <span class="flex-1 text-sm" x-text="tpl.el[k].label"></span>
+            <button class="dbtn !px-2 !py-1" title="Bring forward" aria-label="Bring forward" @click.stop="moveLayer(k,1)">↑</button>
+            <button class="dbtn !px-2 !py-1" title="Send backward" aria-label="Send backward" @click.stop="moveLayer(k,-1)">↓</button>
+          </div>
+        </template>
+        <template x-if="cur">
+          <div class="space-y-3 border-t border-white/10 pt-4 mt-2">
+            <div class="text-xs text-stone-400">Selected: <span class="text-stone-200" x-text="cur.label"></span></div>
+            <label class="dlbl">Size <span class="float-right text-stone-300" x-text="cur.size"></span>
+              <input type="range" :min="isText(selKey)?1.5:5" :max="isText(selKey)?25:60" step="0.5" x-model.number="cur.size"></label>
+            <div x-show="!isText(selKey)" class="grid grid-cols-3 gap-1.5">
+              <template x-for="[p,l] in [['tl','Top left'],['tr','Top right'],['bc','Bottom centre'],['bl','Bottom left'],['br','Bottom right']]" :key="p">
+                <button class="dbtn !px-1" @click="corner(p)" x-text="l"></button></template></div>
+          </div>
+        </template>
+      </div>
+
+      <!-- Presets -->
+      <div x-show="dTab==='presets'" x-transition.opacity.duration.300ms class="space-y-3">
+        <p class="text-xs text-stone-500">A preset restyles colours, fonts and layout. Your artwork, logo and event title are kept.</p>
+        <div class="grid grid-cols-2 gap-3">
+          <template x-for="n in Object.keys(presets)" :key="n">
+            <button @click="applyPreset(n)" class="rounded-xl overflow-hidden border border-white/10 text-left transition-all duration-300 hover:-translate-y-1 hover:border-sky-400 active:scale-95">
+              <div class="h-20 flex items-center justify-center text-3xl" :style="{background:`linear-gradient(135deg,${presets[n].p.g1||presets[n].p.bgColor},${presets[n].p.g2||presets[n].p.bgColor})`,color:presets[n].el.tier.color,'font-family':fonts[presets[n].el.tier.font],'font-weight':800}">VIP</div>
+              <div class="px-2 py-2 text-xs" x-text="n"></div>
+            </button>
+          </template>
+        </div>
+        <button class="dbtn w-full" @click="if(confirm('Reset the whole design to defaults?')){tpl=defaultTpl();selKey='title'}">Reset design</button>
+      </div>
+    </div>
+  </aside>
+</section>
+
+ <!-- TICKETS -->
+<section x-show="tab==='tickets'" x-cloak class="space-y-6">
+  <!-- Top Stat Cards Bar -->
+  <div class="grid grid-cols-3 md:grid-cols-6 gap-3 text-center">
+    <template x-for="s in statCards" :key="s.l">
+      <div class="card !p-3 shadow-sm hover:shadow transition-shadow">
+        <div class="text-2xl font-bold text-stone-800" x-text="s.v"></div>
+        <div class="text-xs text-stone-500 font-medium uppercase tracking-wider mt-0.5" x-text="s.l"></div>
+      </div>
+    </template>
+  </div>
+
+  <!-- Bulk Generate Tickets Card -->
+  <div class="card bg-white shadow-sm border border-stone-200 p-5 rounded-xl">
+    <div class="flex items-center justify-between mb-4 pb-2 border-b border-stone-100">
+      <div>
+        <h2 class="font-bold text-stone-800 text-base">Bulk Ticket Generator</h2>
+        <p class="text-xs text-stone-500">Instantly generate secure, un-named pre-coded ticket series for fast gate distribution.</p>
+      </div>
+      <span class="text-xs px-2.5 py-1 bg-sky-50 text-sky-700 rounded-full font-semibold">Instant Batching</span>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+      <label class="lbl font-medium text-stone-700">Ticket Tier 
+        <select x-model="gTier" class="inp mt-1.5 focus:ring-2 focus:ring-sky-500">
+          <option>Ordinary</option>
+          <option>VIP</option>
+          <option>VVIP</option>
+        </select>
+      </label>
+      <label class="lbl font-medium text-stone-700">Quantity (Batch Count) 
+        <input type="number" min="1" max="5000" x-model.number="gQty" class="inp mt-1.5 focus:ring-2 focus:ring-sky-500">
+      </label>
+      <button class="btn-dark w-full py-2.5 font-medium shadow-sm transition-transform active:scale-98 flex items-center justify-center gap-2" :disabled="busy" @click="generate()">
+        <span x-show="busy" class="animate-spin inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full"></span>
+        <span x-text="busy?'Generating Batch...':'Auto-Generate Tickets'"></span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Print Sheets Manager Card -->
+  <div class="card bg-white shadow-sm border border-stone-200 p-5 rounded-xl">
+    <div class="flex items-center justify-between mb-4 pb-2 border-b border-stone-100">
+      <div>
+        <h2 class="font-bold text-stone-800 text-base">Print Layout & Sheet Manager</h2>
+        <p class="text-xs text-stone-500">Organize selected cards into structured multi-ticket sheets for physical printing.</p>
+      </div>
+      <span class="text-xs px-2.5 py-1 bg-amber-50 text-amber-700 rounded-full font-semibold">Print Optimization</span>
+    </div>
+    <div class="flex flex-wrap items-end gap-4">
+      <label class="lbl font-medium text-stone-700">Tickets per Sheet
+        <select x-model.number="perSheet" class="inp mt-1.5 w-32">
+          <option value="4">4 per page</option>
+          <option value="6">6 per page</option>
+          <option value="8">8 per page</option>
+        </select>
+      </label>
+      <label class="lbl font-medium text-stone-700">Paper Format
+        <select x-model="paper" class="inp mt-1.5 w-32">
+          <option value="A4">A4 Standard</option>
+          <option value="letter">US Letter</option>
+        </select>
+      </label>
+      <button class="btn-dark py-2.5 px-5 font-medium shadow-sm" @click="printTickets(tickets.filter(t=>sel[t.number]))" x-text="`Print ${selCount} selected (${Math.ceil(selCount/perSheet)} sheets)`" :disabled="!selCount"></button>
+      <span class="text-xs text-stone-400 italic ml-auto">Tip: Choose "Save as PDF" in your system print dialog to export a clean file.</span>
+    </div>
+  </div>
+
+  <!-- Filterable Data Table Card -->
+  <div class="card !p-0 overflow-hidden shadow-sm border border-stone-200 rounded-xl bg-white">
+    <!-- Controls Toolbar -->
+    <div class="flex flex-wrap items-center gap-3 p-4 bg-stone-50 border-b border-stone-200">
+      <div class="relative flex-1 min-w-[220px]">
+        <input x-model="q" placeholder="Search serial, name or secure code..." class="inp pl-3 bg-white" aria-label="Search tickets">
+      </div>
+      <select x-model="fTier" class="inp !w-36 bg-white" aria-label="Filter by tier">
+        <option value="">All Tiers</option>
+        <option>Ordinary</option>
+        <option>VIP</option>
+        <option>VVIP</option>
+      </select>
+      <select x-model="fStatus" class="inp !w-36 bg-white" aria-label="Filter by status">
+        <option value="">All Statuses</option>
+        <option value="Unused">Unused</option>
+        <option value="Used">Used</option>
+        <option value="Unprinted">Unprinted</option>
+      </select>
+      <div class="flex gap-2 ml-auto">
+        <button class="btn bg-white hover:bg-stone-100 text-stone-700 text-xs font-medium px-3 py-2" @click="filtered.forEach(t=>sel[t.number]=true)">Select Shown</button>
+        <button class="btn bg-white hover:bg-stone-100 text-stone-700 text-xs font-medium px-3 py-2" @click="filtered.filter(t=>!t.printed).forEach(t=>sel[t.number]=true)">Select Unprinted</button>
+        <button class="btn bg-white hover:bg-rose-50 text-rose-600 text-xs font-medium px-3 py-2 border-stone-200" @click="sel={}">Clear Selection</button>
+      </div>
+    </div>
+
+    <!-- Empty State -->
+    <p x-show="!filtered.length" class="p-12 text-center text-stone-400 text-sm">No matching tickets found. Generate a new batch above or adjust your search filters.</p>
+
+    <!-- Table Container -->
+    <div class="overflow-x-auto max-h-[60vh] overflow-y-auto" x-show="filtered.length">
+      <table class="w-full text-sm text-left border-collapse">
+        <thead class="bg-stone-100/80 text-stone-600 font-semibold text-xs uppercase tracking-wider sticky top-0 z-10 backdrop-blur-sm border-b border-stone-200">
+          <tr>
+            <th class="p-3 w-10 text-center"><input type="checkbox" @change="if($event.target.checked){ filtered.forEach(t=>sel[t.number]=true) } else { sel={} }" class="rounded border-stone-300"></th>
+            <th class="p-3">Serial Number</th>
+            <th class="p-3">Tier</th>
+            <th class="p-3">Attendee / Notes</th>
+            <th class="p-3">Status</th>
+            <th class="p-3">Created Date</th>
+            <th class="p-3">Printed</th>
+            <th class="p-3 text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-stone-200">
+          <template x-for="t in filtered" :key="t.number">
+            <tr class="hover:bg-stone-50/80 transition-colors">
+              <td class="p-3 text-center">
+                <input type="checkbox" :checked="sel[t.number]" @change="sel[t.number]=$event.target.checked" :aria-label="'Select '+t.number" class="rounded border-stone-300">
+              </td>
+              <td class="p-3 font-mono font-semibold text-stone-800" x-text="t.number"></td>
+              <td class="p-3">
+                <span class="px-2.5 py-1 rounded-full text-xs font-bold tracking-wide shadow-2xs" :class="tierClass(t.tier)" x-text="t.tier"></span>
+              </td>
+              <td class="p-3">
+                <input x-model="t.buyer" @change="patchTicket(t)" placeholder="Optional guest name" aria-label="Attendee name" class="w-40 bg-transparent border-b border-dashed border-stone-300 hover:border-stone-500 focus:border-sky-500 focus:outline-hidden py-1 text-xs">
+              </td>
+              <td class="p-3">
+                <span :class="t.status==='Used'?'text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md text-xs font-semibold':'text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md text-xs font-semibold'" x-text="t.status"></span>
+                <div x-show="t.usedAt" class="text-[11px] text-stone-400 mt-0.5" x-text="t.usedAt?fmt(t.usedAt):''"></div>
+              </td>
+              <td class="p-3 text-stone-500 text-xs" x-text="fmt(t.createdAt)"></td>
+              <td class="p-3 text-xs">
+                <span :class="t.printed?'text-emerald-600 font-medium':'text-stone-400'" x-text="t.printed?'Yes':'No'"></span>
+                <div x-show="t.shared" class="text-sky-600 text-[11px] font-medium">Shared</div>
+              </td>
+              <td class="p-3 text-right whitespace-nowrap space-x-2">
+                <button class="btn bg-white hover:bg-stone-100 text-xs font-medium px-2.5 py-1 border border-stone-300 shadow-2xs" @click="printTickets([t])">Print Single</button>
+                <button class="btn bg-white hover:bg-sky-50 text-xs font-medium px-2.5 py-1 border border-sky-300 text-sky-700 shadow-2xs" title="Send by WhatsApp or SMS" @click="shareTicket(t)">Share</button>
+                <button class="btn bg-white hover:bg-stone-100 text-xs font-medium px-2.5 py-1 border border-stone-300 shadow-2xs" @click="copyLink(t)">Copy link</button>
+                <button x-show="can('backup')" class="text-stone-400 hover:text-rose-600 p-1 transition-colors" @click="remove(t)" aria-label="Delete ticket">✕</button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- GATE -->
+<section x-show="tab==='gate'" x-cloak class="max-w-xl mx-auto space-y-4">
+  <div class="grid grid-cols-3 gap-2 text-center">
+    <template x-for="s in statCards" :key="s.l">
+      <div class="card !p-2"><div class="text-xl font-semibold" x-text="s.v"></div><div class="text-xs text-stone-600" x-text="s.l"></div></div>
+    </template>
+  </div>
+  <div class="card">
+    <div id="reader" class="bg-stone-900 rounded-xl min-h-[260px]"></div>
+    <p class="text-xs text-stone-500 mt-2 text-center">Reads printed tickets and phone screens. Ask guests to raise their screen brightness.</p>
+    <p x-show="camError" x-text="camError" class="mt-3 text-sm text-rose-700"></p>
+    <button x-show="camError" @click="startScan()" class="btn mt-2">Try the camera again</button>
+  </div>
+  <form @submit.prevent="onScan(man,true); man=''" class="card flex gap-2 items-end">
+    <label class="lbl flex-1">Manual entry by serial number
+      <input x-model="man" placeholder="e.g. VIP-0012" class="inp mt-1 font-mono" autocapitalize="characters"></label>
+    <button class="btn-dark">Check ticket</button>
+  </form>
+</section>
+
+  <!-- BACKUP -->
+<section x-show="tab==='backup'" x-cloak class="max-w-3xl mx-auto space-y-6">
+  <!-- Section Header Info -->
+  <div class="bg-gradient-to-r from-stone-900 to-[#1b2430] text-white p-6 rounded-2xl shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+    <div>
+      <h2 class="text-lg font-bold">System Control & Operations</h2>
+      <p class="text-xs text-stone-300 mt-0.5">Manage cloud data synchronization, role links, and emergency overrides securely.</p>
+    </div>
+    <div class="sm:text-right">
+      <button @click="syncNow()" title="Tap to sync now" class="px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider border transition-colors"
+        :class="cloud==='live'?'bg-emerald-500/20 border-emerald-500/30 text-emerald-300':cloud==='sync'?'bg-amber-500/20 border-amber-500/30 text-amber-300':'bg-rose-500/20 border-rose-500/30 text-rose-300'" x-text="cloudLabel"></button>
+      <p x-show="cloudErr" x-text="cloudErr" class="text-[11px] text-rose-300 mt-1 max-w-xs"></p>
+    </div>
+  </div>
+
+  <!-- Cloud setup SQL -->
+  <details class="card bg-white shadow-sm border border-stone-200 p-5 rounded-xl">
+    <summary class="cursor-pointer font-bold text-stone-800 text-sm">Cloud setup: run this in the Supabase SQL editor (safe to re-run)</summary>
+    <pre x-ref="sql" class="mt-3 bg-stone-900 text-stone-100 text-[11px] leading-relaxed rounded-lg p-3 overflow-x-auto max-h-96 overflow-y-auto">create extension if not exists pgcrypto with schema extensions;
+
+-- tickets (safe to re-run)
+create table if not exists public.tickets (
+  number text primary key,
+  tier text not null check (tier in ('Ordinary','VIP','VVIP')),
+  code text not null, salt text not null,
+  buyer text not null default '',
+  status text not null default 'Unused' check (status in ('Unused','Used')),
+  created_at bigint not null, used_at bigint,
+  printed boolean not null default false
+);
+alter table public.tickets add column if not exists shared boolean not null default false;
+create index if not exists tickets_created_idx on public.tickets (created_at, number);
+alter table public.tickets enable row level security;
+drop policy if exists "anon full access" on public.tickets;
+create policy "anon full access" on public.tickets for all to anon using (true) with check (true);
+
+create table if not exists public.ticket_counters (tier text primary key, last int not null default 0);
+alter table public.ticket_counters enable row level security;
+
+-- staff accounts: passwords are stored only as bcrypt hashes in a table anon cannot read
+create table if not exists public.users (
+  username text primary key,
+  role text not null check (role in ('admin','producer','gatekeeper')),
+  created_at bigint not null default (extract(epoch from now()) * 1000)::bigint
+);
+create table if not exists public.user_secrets (
+  username text primary key references public.users(username) on delete cascade,
+  pw_hash text not null
+);
+create table if not exists public.sessions (
+  token text primary key,
+  username text not null references public.users(username) on delete cascade,
+  created_at timestamptz not null default now()
+);
+create table if not exists public.settings (key text primary key, value jsonb not null);
+alter table public.users enable row level security;
+alter table public.user_secrets enable row level security;
+alter table public.sessions enable row level security;
+alter table public.settings enable row level security;
+drop policy if exists "read staff list" on public.users;
+create policy "read staff list" on public.users for select to anon using (true);
+
+create or replace function public._admin(p_token text) returns boolean language sql security definer set search_path = public as $$
+  select exists (select 1 from sessions s join users u using (username) where s.token = p_token and u.role = 'admin') $$;
+create or replace function public._staff(p_token text) returns boolean language sql security definer set search_path = public as $$
+  select exists (select 1 from sessions s join users u using (username) where s.token = p_token and u.role in ('admin','producer')) $$;
+
+create or replace function public.app_login(p_user text, p_pass text) returns json language plpgsql security definer set search_path = public, extensions as $$
+declare r record; t text;
+begin
+  select u.username, u.role into r from users u join user_secrets s using (username)
+   where u.username = lower(trim(p_user)) and s.pw_hash = crypt(p_pass, s.pw_hash);
+  if not found then return null; end if;
+  t := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
+  insert into sessions (token, username) values (t, r.username);
+  return json_build_object('username', r.username, 'role', r.role, 'token', t);
+end $$;
+create or replace function public.app_whoami(p_token text) returns json language sql security definer set search_path = public as $$
+  select json_build_object('username', u.username, 'role', u.role) from sessions s join users u using (username) where s.token = p_token $$;
+create or replace function public.app_logout(p_token text) returns void language sql security definer set search_path = public as $$
+  delete from sessions where token = p_token $$;
+
+create or replace function public.staff_create(p_token text, n_user text, n_pass text, n_role text) returns void language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if not _admin(p_token) then raise exception 'Not allowed'; end if;
+  if n_role not in ('producer','gatekeeper') then raise exception 'Invalid role'; end if;
+  if length(trim(n_user)) < 3 or length(n_pass) < 6 then raise exception 'Username needs 3+ characters and password 6+'; end if;
+  insert into users (username, role) values (lower(trim(n_user)), n_role);
+  insert into user_secrets (username, pw_hash) values (lower(trim(n_user)), crypt(n_pass, gen_salt('bf')));
+end $$;
+create or replace function public.staff_delete(p_token text, t_user text) returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not _admin(p_token) then raise exception 'Not allowed'; end if;
+  if lower(t_user) = (select username from sessions where token = p_token) then raise exception 'You cannot delete your own account'; end if;
+  delete from users where username = lower(t_user);
+end $$;
+create or replace function public.staff_password(p_token text, t_user text, n_pass text) returns void language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if not _admin(p_token) then raise exception 'Not allowed'; end if;
+  if length(n_pass) < 6 then raise exception 'Password needs 6+ characters'; end if;
+  update user_secrets set pw_hash = crypt(n_pass, gen_salt('bf')) where username = lower(t_user);
+end $$;
+
+-- continuous numbering: highest existing number per tier, reserved atomically
+create or replace function public.reserve_seq(p_token text, p_tier text, p_qty int) returns int language plpgsql security definer set search_path = public as $$
+declare cur int;
+begin
+  if not _staff(p_token) then raise exception 'Not allowed'; end if;
+  if p_tier not in ('Ordinary','VIP','VVIP') or p_qty < 1 or p_qty > 5000 then raise exception 'Bad request'; end if;
+  perform pg_advisory_xact_lock(hashtext('seq_' || p_tier));
+  select coalesce(max(regexp_replace(number, '^.*-', '')::int), 0) into cur from tickets where tier = p_tier;
+  cur := greatest(cur, coalesce((select last from ticket_counters where tier = p_tier), 0));
+  insert into ticket_counters (tier, last) values (p_tier, cur + p_qty) on conflict (tier) do update set last = cur + p_qty;
+  return cur + 1;
+end $$;
+create or replace function public.purge_tickets(p_token text) returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not _admin(p_token) then raise exception 'Not allowed'; end if;
+  delete from tickets where true; delete from ticket_counters where true;
+end $$;
+
+-- digital ticket pages (guests, no login) and shared ticket design
+create or replace function public.digital_ticket(p_number text, p_code text) returns json language sql security definer set search_path = public as $$
+  select row_to_json(t) from (select number, tier, buyer, code, status from tickets where number = p_number and code = p_code) t $$;
+create or replace function public.public_design() returns jsonb language sql security definer set search_path = public as $$
+  select value from settings where key = 'design' $$;
+create or replace function public.save_design(p_token text, p_design jsonb) returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not _staff(p_token) then raise exception 'Not allowed'; end if;
+  insert into settings (key, value) values ('design', p_design) on conflict (key) do update set value = p_design;
+end $$;
+
+-- first Super Admin. CHANGE THIS PASSWORD after your first login.
+insert into public.users (username, role) values ('admin', 'admin') on conflict do nothing;
+insert into public.user_secrets (username, pw_hash) values ('admin', extensions.crypt('admin123', extensions.gen_salt('bf'))) on conflict do nothing;
+
+do $$ begin
+  begin alter publication supabase_realtime add table public.tickets; exception when duplicate_object then null; end;
+  begin alter publication supabase_realtime add table public.users; exception when duplicate_object then null; end;
+end $$;</pre>
+    <button class="btn-dark text-xs mt-3" @click="navigator.clipboard.writeText($refs.sql.textContent); alert('SQL copied')">Copy SQL</button>
+  </details>
+
+  <!-- Staff Account Manager -->
+  <div x-show="can('backup')" class="card bg-white shadow-sm border border-stone-200 p-6 rounded-xl space-y-4">
+    <div class="flex items-center justify-between border-b border-stone-100 pb-3">
+      <div>
+        <h3 class="font-bold text-stone-800 text-sm">Staff Account Manager</h3>
+        <p class="text-xs text-stone-500">Create logins for producers and gatekeepers. Changes appear on every device instantly.</p>
+      </div>
+      <span class="text-xs px-2.5 py-1 bg-sky-50 text-sky-700 rounded-full font-semibold" x-text="staff.length+' accounts'"></span>
+    </div>
+    <form @submit.prevent="createStaff()" class="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+      <label class="lbl">Username <input x-model="nu" required minlength="3" autocapitalize="none" autocomplete="off" class="inp mt-1"></label>
+      <label class="lbl">Password <input type="password" x-model="np" required minlength="6" autocomplete="new-password" class="inp mt-1"></label>
+      <label class="lbl">Role <select x-model="nr" class="inp mt-1"><option value="gatekeeper">Gatekeeper</option><option value="producer">Producer</option></select></label>
+      <button class="btn-dark">Create Staff Account</button>
+    </form>
+    <p x-show="staffMsg" x-text="staffMsg" class="text-xs font-semibold p-3 rounded-lg" :class="staffOk?'bg-emerald-50 text-emerald-700 border border-emerald-200':'bg-rose-50 text-rose-700 border border-rose-200'"></p>
+    <div class="overflow-x-auto border border-stone-200 rounded-lg">
+      <table class="w-full text-sm text-left">
+        <thead class="bg-stone-100 text-xs uppercase tracking-wider text-stone-600"><tr><th class="p-3">Username</th><th class="p-3">Role</th><th class="p-3">Created</th><th class="p-3 text-right">Actions</th></tr></thead>
+        <tbody class="divide-y divide-stone-200">
+          <template x-for="u in staff" :key="u.username">
+            <tr>
+              <td class="p-3 font-mono font-semibold" x-text="u.username"></td>
+              <td class="p-3"><span class="px-2.5 py-1 rounded-full text-xs font-bold" :class="u.role==='admin'?'bg-violet-100 text-violet-900':u.role==='producer'?'bg-amber-100 text-amber-900':'bg-emerald-100 text-emerald-900'" x-text="u.role"></span></td>
+              <td class="p-3 text-xs text-stone-500" x-text="fmt(Number(u.created_at))"></td>
+              <td class="p-3 text-right whitespace-nowrap">
+                <button class="btn !py-1 text-xs" @click="resetPw(u)">Change password</button>
+                <button class="btn-red !py-1 text-xs" x-show="u.username!==user.username" @click="deleteStaff(u)">Revoke</button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Public app address -->
+  <div class="card bg-white shadow-sm border border-stone-200 p-6 rounded-xl space-y-2">
+    <h3 class="font-bold text-stone-800 text-sm">Public app address</h3>
+    <p class="text-xs text-stone-500">Digital ticket links open this app at the address below. Enter the https:// address where this file is hosted (needed if you run it from a local file).</p>
+    <input x-model="appUrl" @change="localStorage.setItem('gatekeeper.appurl',appUrl.trim())" placeholder="https://yourname.github.io/gatekeeper.html" class="inp font-mono text-xs">
+  </div>
+
+  <!-- Export Database Card -->
+  <div class="card bg-white shadow-sm border border-stone-200 p-6 rounded-xl space-y-3">
+    <div class="flex items-center justify-between border-b border-stone-100 pb-3">
+      <div>
+        <h3 class="font-bold text-stone-800 text-sm">Offline Database Backup (.JSON)</h3>
+        <p class="text-xs text-stone-500">Export all active tickets, verification logs, and custom styling templates into a portable file.</p>
+      </div>
+      <span class="text-xs px-2.5 py-1 bg-stone-100 text-stone-700 rounded-full font-semibold">Data Archive</span>
+    </div>
+    <div class="flex flex-wrap gap-3 pt-1">
+      <button class="btn-dark text-xs py-2 px-4 shadow-2xs flex items-center gap-1.5" @click="exportDb()">
+        <span>📥 Download .JSON Backup</span>
+      </button>
+      <button class="btn bg-white hover:bg-stone-50 text-xs py-2 px-4 border border-stone-300 text-stone-700 shadow-2xs flex items-center gap-1.5" @click="shareDb()">
+        <span>📤 Share File via Device</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Import Database Card -->
+  <div class="card bg-white shadow-sm border border-stone-200 p-6 rounded-xl space-y-4">
+    <div class="flex items-center justify-between border-b border-stone-100 pb-3">
+      <div>
+        <h3 class="font-bold text-stone-800 text-sm">Database Restoration & Merge</h3>
+        <p class="text-xs text-stone-500">Upload a saved backup file to restore records or combine scans from offline shifts.</p>
+      </div>
+      <span class="text-xs px-2.5 py-1 bg-amber-50 text-amber-700 rounded-full font-semibold">Sync Manager</span>
+    </div>
+    
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-stone-50 p-3.5 rounded-lg border border-stone-200 text-xs">
+      <label class="flex items-center gap-2 cursor-pointer font-medium text-stone-700">
+        <input type="radio" value="merge" x-model="impMode" class="text-stone-900 focus:ring-stone-900"> 
+        <span>Merge with device (Preserves scan timestamps)</span>
+      </label>
+      <label class="flex items-center gap-2 cursor-pointer font-medium text-stone-700">
+        <input type="radio" value="replace" x-model="impMode" class="text-stone-900 focus:ring-stone-900"> 
+        <span>Replace entire local database</span>
+      </label>
+    </div>
+
+    <div class="flex items-center justify-between pt-1">
+      <label class="flex items-center gap-2 text-xs font-medium text-stone-700 cursor-pointer">
+        <input type="checkbox" x-model="impDesign" class="rounded border-stone-300">
+        <span>Also override/import active ticket layout design</span>
+      </label>
+    </div>
+
+    <div class="pt-2">
+      <label class="block w-full cursor-pointer bg-stone-100 hover:bg-stone-200/70 border border-dashed border-stone-300 rounded-xl p-4 text-center transition-colors">
+        <span class="text-xs font-semibold text-stone-700">Choose backup .json file to restore...</span>
+        <input type="file" accept=".json,application/json" @change="importFile($event)" class="hidden">
+      </label>
+    </div>
+
+    <p x-show="msg" x-text="msg" class="text-xs font-semibold p-3 rounded-lg" :class="msgOk?'bg-emerald-50 text-emerald-700 border border-emerald-200':'bg-rose-50 text-rose-700 border border-rose-200'"></p>
+  </div>
+
+  <!-- Emergency Reset & Overrides Card -->
+  <div class="card bg-white shadow-sm border border-rose-200 p-6 rounded-xl space-y-3">
+    <div class="flex items-center justify-between border-b border-rose-100 pb-3">
+      <div>
+        <h3 class="font-bold text-rose-900 text-sm">Emergency System Overrides</h3>
+        <p class="text-xs text-rose-600/80">Critical actions that alter system states globally across all connected terminals.</p>
+      </div>
+      <span class="text-xs px-2.5 py-1 bg-rose-50 text-rose-700 rounded-full font-semibold">Restricted Area</span>
+    </div>
+    <div class="flex flex-wrap gap-3 pt-1">
+      <button class="btn bg-white border border-rose-300 hover:bg-rose-50 text-rose-700 text-xs font-semibold py-2 px-4 shadow-2xs transition-colors" @click="resetScans()">🔄 Reset All Scans to Unused</button>
+      <button class="btn bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold py-2 px-4 shadow-2xs transition-colors" @click="clearAll()">⚠️ Purge Entire Ticket Registry</button>
+    </div>
+  </div>
+</section>
+</main>
+
+<!-- SCAN RESULT -->
+<div x-show="result" x-cloak class="fixed inset-0 z-50 flex flex-col items-center justify-center text-center text-white p-6 ui" :class="result&&result.ok?'bg-emerald-600':'bg-rose-700'" role="alert">
+  <template x-if="result">
+    <div>
+      <div class="text-7xl mb-3" x-text="result.ok?'✓':'✕'"></div>
+      <div class="text-3xl md:text-5xl font-bold mb-3" x-text="result.title"></div>
+      <div class="text-xl md:text-2xl mb-6" x-text="result.detail"></div>
+      <template x-if="result.t">
+        <div>
+          <div class="text-5xl md:text-7xl font-black mb-2" x-text="result.t.tier.toUpperCase()"></div>
+          <div class="text-4xl md:text-5xl font-mono font-bold mb-2" x-text="result.t.number"></div>
+          <div class="text-3xl md:text-4xl font-extrabold mt-1" x-text="result.ok?access[result.t.tier]:''"></div>
+          <div class="text-2xl mt-1" x-text="result.t.buyer"></div>
+        </div>
+      </template>
+    </div>
+  </template>
+  <button @click="nextScan()" class="mt-10 bg-white text-stone-900 text-xl font-semibold rounded-xl px-10 py-4">Scan next ticket</button>
+</div>
+
+<!-- LOGIN -->
+<div x-show="!user&&!guest" x-cloak class="fixed inset-0 z-[70] flex items-center justify-center p-4 ui" style="background:radial-gradient(1100px 600px at 15% 10%,rgba(56,189,248,.18),transparent),radial-gradient(900px 500px at 90% 95%,rgba(124,58,237,.2),transparent),#0f1115">
+  <form @submit.prevent="login()" class="w-full max-w-sm rounded-2xl bg-white/[0.06] backdrop-blur border border-white/10 shadow-2xl p-7 space-y-5 text-white">
+    <div class="text-center"><div class="text-4xl mb-2">🎟️</div><h1 class="text-2xl font-semibold tracking-tight">Gatekeeper</h1><p class="text-sm text-white/60 mt-1">Staff sign in</p></div>
+    <label class="block text-xs text-white/70">Username<input x-model="lu" autocomplete="username" autocapitalize="none" required class="dinp mt-1"></label>
+    <label class="block text-xs text-white/70">Password
+      <div class="relative"><input :type="showPw?'text':'password'" x-model="lp" autocomplete="current-password" required class="dinp mt-1 pr-14">
+        <button type="button" @click="showPw=!showPw" class="absolute right-3 bottom-2 text-xs text-white/60 hover:text-white" x-text="showPw?'Hide':'Show'"></button></div></label>
+    <p x-show="loginErr" x-text="loginErr" role="alert" class="text-sm text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2"></p>
+    <button :disabled="loginBusy" class="w-full rounded-lg bg-sky-500 hover:bg-sky-400 disabled:opacity-60 transition-all duration-300 py-2.5 font-medium flex items-center justify-center gap-2">
+      <span x-show="loginBusy" class="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full"></span><span x-text="loginBusy?'Signing in…':'Sign in'"></span></button>
+    <p class="text-center text-[11px] text-white/40">Accounts are created by the Super Admin.</p>
+  </form>
+</div>
+
+<!-- GUEST DIGITAL TICKET -->
+<div x-show="guest" x-cloak class="min-h-screen ui bg-[#12151b] text-white p-4">
+  <div class="w-full max-w-md mx-auto space-y-4 mt-4">
+    <div class="text-center text-sm text-white/60">Digital ticket</div>
+    <p x-show="gErr" x-text="gErr" class="text-rose-300 text-center"></p>
+    <p x-show="!gt&&!gErr" class="text-center text-white/60">Loading your ticket…</p>
+    <template x-if="gt">
+      <div class="space-y-4">
+        <p x-show="gt.status==='Used'" class="text-center text-amber-300 text-sm">This ticket has already been scanned at the gate.</p>
+        <div x-html="ticketHTML(gt,false,true)"></div>
+        <div class="bg-white rounded-2xl p-5 text-center text-stone-900">
+          <img :src="qrUrl(`TKT|${gt.number}|${gt.code}`)" alt="Ticket QR code" class="w-full max-w-[280px] mx-auto">
+          <div class="text-3xl font-black mt-3" x-text="gt.tier"></div>
+          <div class="font-mono text-lg" x-text="gt.number"></div>
+          <div class="text-stone-700" x-text="gt.buyer"></div>
+          <div class="text-sm text-stone-500 mt-1" x-text="access[gt.tier]"></div>
+        </div>
+        <p class="text-xs text-white/50 text-center">Show this QR code at the gate. Raise your screen brightness for faster scanning.</p>
+      </div>
+    </template>
+  </div>
+</div>
+
+<div id="printArea" x-html="printHTML"></div>
+
+<script>
+  const SUPABASE_URL = 'https://sjnawijxuwisbgvhphqg.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNqbmF3aWp4dXdpc2JndmhwaHFnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQwMjkzMTQsImV4cCI6MjA5OTYwNTMxNH0.JzFS5QAK37Xjas88XSlXhSjLG9sixsBUb-MfgKgktCE';
+const supabaseClient = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+function app(){
+  const DB='gatekeeper.tickets.v2', TP='gatekeeper.template.v2', PQ='gatekeeper.pending.v1', SF='gatekeeper.synced.v1', SK='gatekeeper.session.v1', AU='gatekeeper.appurl', DD='gatekeeper.designdirty', qc={}, sb=supabaseClient;
+  let dt, quiet=false;
+  const SESS=(()=>{ try{ const x=JSON.parse(localStorage.getItem(SK)||'null'); return x&&x.username&&x.role&&x.token?x:null; }catch(e){ return null; } })();
+  const GM=location.hash.match(/^#\/t\/([A-Za-z]+-\d+)\.([A-Za-z0-9]+)$/), GUEST=GM?{number:GM[1],code:GM[2]}:null;
+  const FONTS={'Montserrat':"Montserrat,system-ui,sans-serif",'Poppins':"Poppins,system-ui,sans-serif",'Inter':"Inter,system-ui,sans-serif",'Oswald':"Oswald,Impact,sans-serif",'Playfair Display':"'Playfair Display',Georgia,serif",'Cinzel':"Cinzel,Georgia,serif",'Space Grotesk':"'Space Grotesk',system-ui,sans-serif",'Monospace':"ui-monospace,Menlo,Consolas,monospace"};
+  const T0=(label,x,y,size,color,weight,font,o)=>({label,x,y,size,color,weight,font,ls:0,align:'left',transform:'none',sh:1,shc:'#000000',show:true,...o});
+  const defaultTpl=()=>({bg:'',logo:'',bgColor:'#1b2430',eventTitle:'Summer Fest 2026',aw:2,ah:1,radius:2,shadow:40,blur:0,bgOp:1,
+    gType:'none',g1:'#7c3aed',g2:'#0ea5e9',gAngle:135,gOp:.6,order:['title','tier','name','serial','logo','qr'],
+    el:{title:T0('Event title',5,8,6.5,'#ffffff',700,'Montserrat',{transform:'uppercase',ls:.05}),
+      tier:T0('Tier label',5,30,10,'#fbbf24',900,'Montserrat',{transform:'uppercase'}),
+      name:T0('Attendee name',5,62,5,'#ffffff',500,'Inter'),
+      serial:T0('Serial number',5,80,4.5,'#ffffff',500,'Monospace'),
+      logo:{label:'Logo / sponsor',x:80,y:6,size:14,show:true},
+      qr:{label:'QR code',x:68,y:18,size:27,show:true}}});
+  const PRESETS={
+    'VIP Neon Cyberpunk':{p:{bgColor:'#0a0014',gType:'linear',g1:'#2b0057',g2:'#003a5c',gAngle:135,radius:3,shadow:70},
+      el:{title:{color:'#00f0ff',font:'Space Grotesk',weight:700,ls:.15,sh:2,shc:'#00f0ff',x:5,y:8,size:5.5,transform:'uppercase'},
+        tier:{color:'#ff2bd6',font:'Oswald',weight:700,ls:.08,sh:3,shc:'#ff2bd6',x:5,y:26,size:13,transform:'uppercase'},
+        name:{color:'#ffffff',font:'Space Grotesk',weight:500,x:5,y:64,size:5,sh:0},
+        serial:{color:'#00f0ff',font:'Monospace',x:5,y:80,size:4.5,sh:2,shc:'#00f0ff'},qr:{x:68,y:18,size:27}}},
+    'Gold Luxury Gala':{p:{bgColor:'#0d0d0d',gType:'radial',g1:'#4a3510',g2:'#0d0d0d',radius:1,shadow:60},
+      el:{title:{color:'#e8c872',font:'Cinzel',weight:700,ls:.2,align:'center',transform:'uppercase',x:36,y:9,size:5.5,sh:0},
+        tier:{color:'#f6e3a1',font:'Cinzel',weight:900,ls:.15,align:'center',transform:'uppercase',x:36,y:28,size:10},
+        name:{color:'#fff8e1',font:'Playfair Display',weight:500,align:'center',x:36,y:60,size:5.5,sh:0},
+        serial:{color:'#c9a24a',font:'Cinzel',weight:500,ls:.15,align:'center',x:36,y:80,size:4,sh:0},qr:{x:66,y:16,size:28}}},
+    'Modern Minimalist Festival':{p:{bgColor:'#f5f1e8',gType:'none',radius:2,shadow:25},
+      el:{title:{color:'#111111',font:'Poppins',weight:700,transform:'uppercase',x:5,y:8,size:5,sh:0},
+        tier:{color:'#e4572e',font:'Montserrat',weight:900,x:5,y:26,size:12,transform:'uppercase',sh:0},
+        name:{color:'#222222',font:'Inter',weight:500,x:5,y:62,size:5,sh:0},
+        serial:{color:'#555555',font:'Space Grotesk',weight:500,x:5,y:80,size:4.5,sh:0},qr:{x:68,y:18,size:27}}},
+    'Retro Vintage Ticket':{p:{bgColor:'#d9bf8c',gType:'radial',g1:'#f3e6c8',g2:'#c9a56a',radius:1,shadow:35},
+      el:{title:{color:'#5b2a14',font:'Playfair Display',weight:900,ls:.12,align:'center',transform:'uppercase',x:36,y:8,size:5.5,sh:0},
+        tier:{color:'#a3321f',font:'Oswald',weight:700,ls:.1,align:'center',transform:'uppercase',x:36,y:28,size:12,sh:0},
+        name:{color:'#3b2a1a',font:'Playfair Display',weight:500,align:'center',x:36,y:62,size:5.5,sh:0},
+        serial:{color:'#5b2a14',font:'Monospace',weight:700,align:'center',x:36,y:80,size:4.5,sh:0},qr:{x:66,y:16,size:28}}}
+  };
+  return {
+    tab:SESS&&SESS.role==='gatekeeper'?'gate':'design', user:SESS, guest:GUEST, gt:null, gErr:'', lu:'', lp:'', showPw:false, loginErr:'', loginBusy:false, staff:[], nu:'', np:'', nr:'gatekeeper', staffMsg:'', staffOk:true, appUrl:localStorage.getItem(AU)||'', cloud:'offline', cloudErr:'', pending:[], syncing:false, flushing:false, tickets:[], tpl:defaultTpl(), pTier:'VIP', pName:'Amina Nakato', dTab:'canvas', selKey:'title', view:'edit', guides:null, tilt:{rx:0,ry:0,gx:50,gy:50}, presets:PRESETS, fonts:FONTS,
+    gTier:'Ordinary', gQty:10, gName:'', busy:false, q:'', fTier:'', fStatus:'', sel:{},
+    perSheet:6, paper:'A4', printHTML:'', drag:null,
+    scanner:null, camError:'', result:null, locked:false, man:'',
+    impMode:'merge', impDesign:true, msg:'', msgOk:true,
+    access:{Ordinary:'General admission',VIP:'VIP area access',VVIP:'All-access (VVIP)'},
+
+    init(){
+      try{ this.tickets=JSON.parse(localStorage.getItem(DB)||'[]'); }catch(e){}
+      try{ const t=JSON.parse(localStorage.getItem(TP)||'null'); if(t) this.tpl=this.mergeTpl(t); }catch(e){}
+      this.$watch('tickets',v=>this.save(DB,v));
+      this.$watch('tpl',v=>{ if(this.guest) return; this.save(TP,v); if(!quiet) this.designChanged(); });
+      this.$watch('tab',v=>{ if(!this.user) return; if(!this.can(v)){ this.tab=this.tabs[0][0]; return; } v==='gate'?this.$nextTick(()=>this.startScan()):this.stopScan(); });
+      try{ this.pending=JSON.parse(localStorage.getItem(PQ)||'[]'); }catch(e){}
+      window.addEventListener('hashchange',()=>location.reload());
+      if(this.guest) this.guestInit(); else if(this.user) this.boot();
+    },
+    defaultTpl,
+    mergeTpl(t){
+      const d=defaultTpl();
+      for(const k in d) if(k!=='el'&&k!=='order'&&t[k]!==undefined) d[k]=t[k];
+      for(const k in d.el) if(t.el&&t.el[k]){
+        Object.assign(d.el[k],t.el[k]); const w=d.el[k].weight;
+        if(w!==undefined) d.el[k].weight=w>=800?900:w>=600?700:w>=400?500:300;
+      }
+      if(Array.isArray(t.order)&&d.order.every(k=>t.order.includes(k))) d.order=t.order.filter(k=>d.el[k]);
+      return d; },
+    save(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){ alert('Browser storage is full. Export a backup and use a smaller background image.'); } },
+    fmt(ts){ return new Date(ts).toLocaleString(); },
+    esc(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); },
+    tierClass(t){ return {Ordinary:'bg-stone-200 text-stone-800',VIP:'bg-amber-100 text-amber-900',VVIP:'bg-violet-100 text-violet-900'}[t]; },
+
+    get sample(){ return {number:{Ordinary:'ORD',VIP:'VIP',VVIP:'VVIP'}[this.pTier]+'-0001',tier:this.pTier,buyer:this.pName,code:'SAMPLE000000'}; },
+    get selCount(){ return this.tickets.filter(t=>this.sel[t.number]).length; },
+    get filtered(){
+      const q=this.q.trim().toLowerCase();
+      return this.tickets.filter(t=>(!this.fTier||t.tier===this.fTier)
+        &&(!this.fStatus||(this.fStatus==='Unprinted'?!t.printed:t.status===this.fStatus))
+        &&(!q||(t.number+' '+t.buyer+' '+t.code).toLowerCase().includes(q)));
+    },
+    get statCards(){
+      const T=this.tickets, U=T.filter(t=>t.status==='Used');
+      const by=k=>`${U.filter(t=>t.tier===k).length}/${T.filter(t=>t.tier===k).length}`;
+      return [{l:'Generated',v:T.length},{l:'Scanned',v:U.length},{l:'Unused',v:T.length-U.length},
+        {l:'Ordinary in/total',v:by('Ordinary')},{l:'VIP in/total',v:by('VIP')},{l:'VVIP in/total',v:by('VVIP')}];
+    },
+
+    /* ---------- design studio ---------- */
+    isText(k){ return k!=='qr'&&k!=='logo'; },
+    get cur(){ return this.selKey?this.tpl.el[this.selKey]:null; },
+    get ratio(){ return Math.max(.25,Math.min(4,(this.tpl.aw||1)/(this.tpl.ah||1))); },
+    get maxW(){ return 'min(100%,'+(58*this.ratio).toFixed(1)+'vh)'; },
+    qrUrl(s){
+      if(qc[s]) return qc[s];
+      const d=document.createElement('div');
+      new QRCode(d,{text:s,width:300,height:300,correctLevel:QRCode.CorrectLevel.M});
+      const c=d.querySelector('canvas');
+      return qc[s]=c?c.toDataURL('image/png'):d.querySelector('img').src;
+    },
+    ticketHTML(t,edit,fx){
+      const T=this.tpl, E=T.el, sel=edit?this.selKey:null;
+      const txt={title:T.eventTitle,tier:t.tier,name:t.buyer||'',serial:t.number};
+      const shadow=fx&&T.shadow>0?`box-shadow:0 ${T.shadow*.25}px ${T.shadow*.7}px rgba(0,0,0,.45);`:'';
+      let h=`<div style="container-type:inline-size;width:100%"><div style="position:relative;aspect-ratio:${this.ratio};overflow:hidden;border-radius:${T.radius}cqw;background-color:${T.bgColor};${shadow}">`;
+      if(T.bg) h+=`<div style="position:absolute;inset:0;background:url(${T.bg}) center/cover;opacity:${T.bgOp};${T.blur?`filter:blur(${T.blur}cqw);transform:scale(1.12);`:''}"></div>`;
+      if(T.gType!=='none') h+=`<div style="position:absolute;inset:0;opacity:${T.gOp};background:${T.gType==='linear'?`linear-gradient(${T.gAngle}deg,${T.g1},${T.g2})`:`radial-gradient(circle at 50% 40%,${T.g1},${T.g2})`}"></div>`;
+      T.order.forEach((k,i)=>{
+        const c=E[k]; if(!c||!c.show) return;
+        const text=this.isText(k); if(text&&!txt[k]) return; if(k==='logo'&&!T.logo) return;
+        const on=sel===k, ed=edit?`data-key="${k}" class="ed" `:'';
+        const base=`position:absolute;left:${c.x}%;top:${c.y}%;z-index:${i+2};touch-action:none;${on?'outline:2px solid #38bdf8;outline-offset:2px;':''}`;
+        const hd=on?`<span data-handle="1" style="position:absolute;right:-2.2cqw;bottom:-2.2cqw;width:2.2cqw;height:2.2cqw;min-width:10px;min-height:10px;background:#38bdf8;border:2px solid #fff;border-radius:50%;cursor:nwse-resize;touch-action:none;text-shadow:none"></span>`:'';
+        if(text){
+          const tr=c.align==='center'?'translateX(-50%)':c.align==='right'?'translateX(-100%)':'none';
+          const ts=c.sh?`0 0 ${c.sh*.5}cqw ${c.shc},0 .2cqw ${c.sh*1.1}cqw ${c.shc}`:'none';
+          h+=`<div ${ed}style="${base}transform:${tr};font-size:${c.size}cqw;color:${c.color};font-weight:${c.weight};font-family:${FONTS[c.font]||FONTS.Inter};letter-spacing:${c.ls}em;text-align:${c.align};text-transform:${c.transform};text-shadow:${ts};line-height:1.1;white-space:nowrap">${this.esc(txt[k])}${hd}</div>`;
+        }else if(k==='qr'){
+          h+=`<div ${ed}style="${base}width:${c.size}%;aspect-ratio:1"><img draggable="false" alt="QR code" src="${this.qrUrl(`TKT|${t.number}|${t.code}`)}" style="width:100%;height:100%;display:block;background:#fff;padding:1.2cqw;box-sizing:border-box;border-radius:.8cqw;image-rendering:pixelated;pointer-events:none">${hd}</div>`;
+        }else{
+          h+=`<div ${ed}style="${base}width:${c.size}%"><img draggable="false" alt="Logo" src="${T.logo}" style="width:100%;display:block;pointer-events:none">${hd}</div>`;
+        }
+      });
+      if(edit&&this.guides){
+        this.guides.x.forEach(v=>h+=`<div style="position:absolute;left:${v}%;top:0;bottom:0;border-left:1px dashed #f472b6;z-index:99"></div>`);
+        this.guides.y.forEach(v=>h+=`<div style="position:absolute;top:${v}%;left:0;right:0;border-top:1px dashed #f472b6;z-index:99"></div>`);
+      }
+      return h+'</div></div>';
+    },
+    dragStart(e){
+      const el=e.target.closest('[data-key]');
+      if(!el){ this.selKey=null; return; }
+      const k=el.dataset.key, c=this.tpl.el[k], box=el.parentElement.getBoundingClientRect(), r=el.getBoundingClientRect();
+      this.selKey=k;
+      this.drag={k,c,box,hd:!!e.target.closest('[data-handle]'),sx:e.clientX,sy:e.clientY,x0:c.x,y0:c.y,s0:c.size,w0:r.width||1,
+        w:r.width/box.width*100,h:r.height/box.height*100,
+        offX:(r.left-box.left)/box.width*100-c.x,offY:(r.top-box.top)/box.height*100-c.y};
+      e.preventDefault();
+    },
+    dragMove(e){
+      const d=this.drag; if(!d) return;
+      const dx=e.clientX-d.sx, dy=e.clientY-d.sy;
+      if(d.hd){
+        const img=d.k==='qr'||d.k==='logo';
+        d.c.size=Math.round(Math.max(img?5:1.5,Math.min(img?60:25,d.s0*Math.max(.2,(d.w0+dx)/d.w0)))*10)/10;
+        return;
+      }
+      const T=[0,5,50,95,100], gx=[], gy=[];
+      const snap=(p,off,len,out)=>{
+        let best=null;
+        for(const t of T) for(const q of [p+off,p+off+len/2,p+off+len]){
+          const df=t-q; if(Math.abs(df)<1.5&&(!best||Math.abs(df)<Math.abs(best.df))) best={df,t};
+        }
+        if(best){ out.push(best.t); return p+best.df; }
+        return p;
+      };
+      const x=snap(d.x0+dx/d.box.width*100,d.offX,d.w,gx), y=snap(d.y0+dy/d.box.height*100,d.offY,d.h,gy);
+      d.c.x=Math.round(x*10)/10; d.c.y=Math.round(y*10)/10; this.guides={x:gx,y:gy};
+    },
+    dragEnd(){ this.drag=null; this.guides=null; },
+    moveLayer(k,d){ const o=this.tpl.order, i=o.indexOf(k), j=i+d; if(j<0||j>=o.length) return; [o[i],o[j]]=[o[j],o[i]]; },
+    corner(p){
+      const c=this.cur; if(!c||this.isText(this.selKey)) return;
+      const h=c.size*this.ratio, r=n=>Math.round(Math.max(0,n)*10)/10;
+      const m={tl:[3,5],tr:[97-c.size,5],bl:[3,95-h],br:[97-c.size,95-h],bc:[(100-c.size)/2,95-h]}[p];
+      c.x=r(m[0]); c.y=r(m[1]);
+    },
+    applyPreset(n){
+      const P=PRESETS[n], d=defaultTpl();
+      Object.assign(this.tpl,{aw:2,ah:1,blur:0,bgOp:1,gType:'none',...P.p,gOp:this.tpl.bg?.55:1,order:d.order});
+      for(const k in P.el) Object.assign(this.tpl.el[k],d.el[k],P.el[k],{show:true});
+    },
+    tiltMove(e){
+      const r=e.currentTarget.getBoundingClientRect(), px=(e.clientX-r.left)/r.width, py=(e.clientY-r.top)/r.height;
+      this.tilt={rx:(.5-py)*16,ry:(px-.5)*20,gx:px*100,gy:py*100};
+    },
+    tiltReset(){ this.tilt={rx:0,ry:0,gx:50,gy:50}; },
+    uploadImg(e,key,max,type){
+      const f=e.target.files[0]; if(!f) return;
+      const r=new FileReader();
+      r.onload=()=>{ const i=new Image(); i.onload=()=>{
+        const s=Math.min(1,max/i.width), c=document.createElement('canvas');
+        c.width=Math.round(i.width*s); c.height=Math.round(i.height*s);
+        c.getContext('2d').drawImage(i,0,0,c.width,c.height);
+        this.tpl[key]=c.toDataURL(type,.88); };
+        i.src=r.result; };
+      r.readAsDataURL(f); e.target.value='';
+    },
+
+    /* ---------- generation, printing ---------- */
+    async hash(str){
+      if(window.crypto&&crypto.subtle){
+        const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(str));
+        return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');
+      }
+      let a=0xdeadbeef,b=0x41c6ce57;
+      for(let i=0;i<str.length;i++){const c=str.charCodeAt(i);a=Math.imul(a^c,2654435761);b=Math.imul(b^c,1597334677);}
+      a=Math.imul(a^(a>>>16),2246822507)^Math.imul(b^(b>>>13),3266489909);
+      b=Math.imul(b^(b>>>16),2246822507)^Math.imul(a^(a>>>13),3266489909);
+      return (b>>>0).toString(16).padStart(8,'0')+(a>>>0).toString(16).padStart(8,'0');
+    },
+    rnd(n){ return [...crypto.getRandomValues(new Uint8Array(n))].map(x=>x.toString(16).padStart(2,'0')).join(''); },
+    async makeCode(number,salt){ return (await this.hash(number+'|'+salt)).slice(0,12).toUpperCase(); },
+
+    async generate(){ if(!this.can('tickets')) return;
+      const n=Math.max(1,Math.min(5000,parseInt(this.gQty)||1)); this.busy=true;
+      const p={Ordinary:'ORD',VIP:'VIP',VVIP:'VVIP'}[this.gTier];
+      let seq=this.tickets.filter(t=>t.tier===this.gTier).reduce((m,t)=>Math.max(m,parseInt(t.number.split('-')[1])||0),0);
+      if(sb){
+        try{ const r=await sb.rpc('reserve_seq',{p_token:this.user.token,p_tier:this.gTier,p_qty:n}); if(r.error) throw r.error; seq=r.data-1; }
+        catch(e){ this.busy=false; alert('Could not reserve ticket numbers from the cloud. Connect to the internet so numbering stays continuous, then try again.\n\n'+(e.message||'')); return; }
+      }
+      const fresh=[];
+      for(let i=0;i<n;i++){
+        const number=`${p}-${String(++seq).padStart(4,'0')}`, salt=this.rnd(12);
+        fresh.push({number,tier:this.gTier,salt,code:await this.makeCode(number,salt),buyer:n===1?this.gName.trim():'',status:'Unused',createdAt:Date.now(),usedAt:null,printed:false,shared:false});
+      }
+      this.tickets=[...this.tickets,...fresh]; this.queue({op:'insert',rows:fresh}); this.gName=''; this.busy=false;
+    },
+    remove(t){ if(!this.can('backup')) return; if(confirm(`Delete ticket ${t.number}?`)){ this.tickets=this.tickets.filter(x=>x!==t); delete this.sel[t.number]; this.queue({op:'delete',numbers:[t.number]}); } },
+    clearAll(){ if(!this.can('backup')) return; if(confirm('Delete every ticket on this device and in the cloud? This cannot be undone.')){ this.tickets=[]; this.sel={}; this.queue({op:'purge'}); } },
+    resetScans(){ if(!this.can('backup')) return; if(confirm('Mark every ticket as Unused again, on all devices?')){ this.tickets.forEach(t=>{t.status='Unused';t.usedAt=null;}); this.queue({op:'reset'}); } },
+
+    printTickets(list){
+      if(!list.length||!this.can('tickets')) return;
+      const n=this.perSheet, r=this.ratio, cols=n===4?(r>=1.5?1:2):2, rows=Math.ceil(n/cols), mh=((this.paper==='A4'?255:240)-(rows-1)*4)/rows, mw=(190-(cols-1)*4)/cols, L=[cols,Math.floor(Math.min(mw,mh*r))];
+      let h='';
+      for(let i=0;i<list.length;i+=n)
+        h+=`<section class="sheet" style="grid-template-columns:repeat(${L[0]},${L[1]}mm)">`+list.slice(i,i+n).map(t=>`<div class="cell">${this.ticketHTML(t,false)}</div>`).join('')+'</section>';
+      this.printHTML=h;
+      setTimeout(()=>{ window.print(); list.forEach(t=>t.printed=true); this.queue({op:'printed',numbers:list.map(t=>t.number)}); },250);
+    },
+
+    /* ---------- scanner ---------- */
+    async startScan(){
+      if(this.scanner) return; this.camError='';
+      try{
+        this.scanner=new Html5Qrcode('reader',{formatsToSupport:[Html5QrcodeSupportedFormats.QR_CODE],experimentalFeatures:{useBarCodeDetectorIfSupported:true},verbose:false});
+        await this.scanner.start({facingMode:'environment'},{fps:15,qrbox:(w,h)=>{ const m=Math.floor(Math.min(w,h)*.75); return {width:m,height:m}; }},x=>this.onScan(x,false),()=>{});
+      }catch(e){
+        this.scanner=null;
+        this.camError='Camera unavailable. Allow camera access and open this page over https or localhost. You can still check tickets by serial number below.';
+      }
+    },
+    async stopScan(){ if(!this.scanner) return; const s=this.scanner; this.scanner=null; try{ await s.stop(); s.clear(); }catch(e){} },
+
+    async onScan(text,manual){
+      if(!this.can('gate')||this.locked||!String(text||'').trim()) return;
+      this.locked=true; let t=null;
+      if(manual){
+        const m=String(text).trim().toUpperCase().match(/^(ORD|VIP|VVIP)-?(\d+)$/);
+        if(m) t=this.tickets.find(x=>x.number===`${m[1]}-${m[2].padStart(4,'0')}`);
+      }else{
+        const [tag,num,code]=String(text).trim().split('|');
+        if(tag==='TKT') t=this.tickets.find(x=>x.number===num&&x.code===code);
+      }
+      if(t&&(await this.makeCode(t.number,t.salt))!==t.code) t=null;
+      if(!t) this.result={ok:false,title:'INVALID TICKET',detail:'NOT FOUND IN DATABASE'};
+      else if(t.status==='Used') this.result={ok:false,title:'DUPLICATE TICKET',detail:'ALREADY SCANNED AT '+this.fmt(t.usedAt),t};
+      else{ const ok=await this.claim(t); this.result=ok?{ok:true,title:'VALID TICKET',detail:'Entry allowed',t:{...t}}:{ok:false,title:'DUPLICATE TICKET',detail:'ALREADY SCANNED AT '+this.fmt(t.usedAt),t}; }
+      this.beep(this.result.ok);
+      if(navigator.vibrate) navigator.vibrate(this.result.ok?120:[200,100,200]);
+    },
+    nextScan(){ this.result=null; setTimeout(()=>{this.locked=false;},400); },
+    beep(ok){
+      try{
+        const x=new (window.AudioContext||window.webkitAudioContext)();
+        (ok?[[880,0],[1175,.12]]:[[220,0],[170,.22]]).forEach(([f,d])=>{
+          const o=x.createOscillator(),g=x.createGain(); o.type=ok?'sine':'sawtooth'; o.frequency.value=f;
+          g.gain.setValueAtTime(.25,x.currentTime+d); g.gain.exponentialRampToValueAtTime(.001,x.currentTime+d+.2);
+          o.connect(g); g.connect(x.destination); o.start(x.currentTime+d); o.stop(x.currentTime+d+.22);
+        });
+      }catch(e){}
+    },
+
+    /* ---------- roles & cloud sync (Supabase) ---------- */
+    get tabs(){
+      const L={design:'Design',tickets:'Tickets',gate:'Gate',backup:'Backup'};
+      return ({admin:['design','tickets','gate','backup'],producer:['design','tickets'],gatekeeper:['gate']}[this.role]||[]).map(k=>[k,L[k]]);
+    },
+    can(k){ return this.tabs.some(x=>x[0]===k); },
+    get roleLabel(){ return ({admin:'Super Admin',producer:'Producer',gatekeeper:'Gatekeeper'}[this.role]||''); },
+    get cloudLabel(){ const n=this.pending.length; return this.cloud==='live'?'Live sync':this.cloud==='sync'?'Syncing…':'Offline'+(n?` · ${n} queued`:''); },
+    toRow(t){ return {number:t.number,tier:t.tier,code:t.code,salt:t.salt,buyer:t.buyer||'',status:t.status,created_at:t.createdAt,used_at:t.usedAt??null,printed:!!t.printed,shared:!!t.shared}; },
+    fromRow(r){ return {number:r.number,tier:r.tier,code:r.code,salt:r.salt,buyer:r.buyer||'',status:r.status,createdAt:Number(r.created_at),usedAt:r.used_at==null?null:Number(r.used_at),printed:!!r.printed,shared:!!r.shared}; },
+    errMsg(e){ return e.code==='PGRST205'||/does not exist|schema cache/i.test(e.message||'')?'Cloud table not found. Run the setup SQL in your Supabase project.':(e.message||'Sync failed'); },
+
+    queue(o){ this.pending.push(o); this.save(PQ,this.pending); this.flush(); },
+    async flush(){
+      while(this.flushing) await new Promise(r=>setTimeout(r,100));
+      if(!sb||!navigator.onLine) return !this.pending.length;
+      this.flushing=true;
+      try{
+        while(this.pending.length){
+          try{ await this.run(this.pending[0]); }
+          catch(e){ if(e&&e.code) this.cloudErr=this.errMsg(e); else throw e; }
+          this.pending.shift(); this.save(PQ,this.pending);
+        }
+        return true;
+      }catch(e){ this.cloud='offline'; return false; }
+      finally{ this.flushing=false; }
+    },
+    async run(o){
+      const t=sb.from('tickets'), ck=r=>{ if(r.error) throw r.error; return r; };
+      const ch=(a,n)=>Array.from({length:Math.ceil(a.length/n)},(_,i)=>a.slice(i*n,i*n+n));
+      if(o.op==='upsert'||o.op==='seed') for(const c of ch(o.rows,500)) ck(await t.upsert(c.map(r=>this.toRow(r)),{onConflict:'number',ignoreDuplicates:o.op==='seed'}));
+      else if(o.op==='patch') ck(await t.update({buyer:o.buyer}).eq('number',o.number));
+      else if(o.op==='claim') ck(await t.update({status:'Used',used_at:o.usedAt}).eq('number',o.number).eq('status','Unused'));
+      else if(o.op==='printed') for(const c of ch(o.numbers,100)) ck(await t.update({printed:true}).in('number',c));
+      else if(o.op==='delete') for(const c of ch(o.numbers,100)) ck(await t.delete().in('number',c));
+      else if(o.op==='reset') ck(await t.update({status:'Unused',used_at:null}).neq('status','Unused'));
+      else if(o.op==='purge') ck(await sb.rpc('purge_tickets',{p_token:this.user.token}));
+      else if(o.op==='insert') for(const c of ch(o.rows,500)) ck(await t.insert(c.map(r=>this.toRow(r))));
+      else if(o.op==='shared') for(const c of ch(o.numbers,100)) ck(await t.update({shared:true}).in('number',c));
+    },
+    patchTicket(t){ this.queue({op:'patch',number:t.number,buyer:t.buyer||''}); },
+    applyRemote(r){ const n=this.fromRow(r), l=this.tickets.find(x=>x.number===n.number); if(l) Object.assign(l,n); else this.tickets.push(n); },
+    onRemote(p){
+      if(p.eventType==='DELETE') this.tickets=this.tickets.filter(x=>x.number!==p.old.number);
+      else if(p.new) this.applyRemote(p.new);
+    },
+    async syncNow(){
+      if(!sb||!navigator.onLine||this.syncing) return;
+      this.syncing=true; this.cloud='sync'; this.cloudErr='';
+      try{
+        if(!localStorage.getItem(SF)&&this.tickets.length&&this.can('tickets')) this.pending.unshift({op:'seed',rows:this.tickets.map(t=>({...t}))});
+        if(!(await this.flush())) throw new Error('offline');
+        let all=[], from=0;
+        for(;;){
+          const r=await sb.from('tickets').select('*').order('created_at').order('number').range(from,from+999);
+          if(r.error) throw r.error;
+          all=all.concat(r.data); if(r.data.length<1000) break; from+=1000;
+        }
+        const mine=all.map(r=>this.fromRow(r));
+        if(!localStorage.getItem(SF)){ const have=new Set(all.map(r=>r.number)); this.tickets.forEach(t=>{ if(!have.has(t.number)) mine.push(t); }); }
+        this.tickets=mine;
+        if(!this.cloudErr) localStorage.setItem(SF,'1');
+        this.cloud='live'; this.loadStaff(); this.syncDesign();
+      }catch(e){ this.cloud='offline'; if(e&&e.code) this.cloudErr=this.errMsg(e); }
+      this.syncing=false;
+    },
+     cloudStart(){
+      window.addEventListener('online',()=>{ this.syncNow(); this.checkSession(); });
+      window.addEventListener('offline',()=>{ this.cloud='offline'; });
+      if(!sb){ this.cloud='offline'; this.cloudErr='Supabase library not loaded. Working offline from this device.'; return; }
+      this.syncNow();
+      
+      try {
+        // Use a completely unique channel name every time to avoid SDK cache collisions
+        const channelName = 'live_sync_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+        
+        sb.channel(channelName)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets' }, p => this.onRemote(p))
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, p => this.onUsers(p))
+          .subscribe(s => {
+            if (s === 'SUBSCRIBED') this.cloud = 'live';
+            else if (['CLOSED', 'CHANNEL_ERROR', 'TIMED_OUT'].includes(s)) this.cloud = 'offline';
+          });
+      } catch (e) {
+        this.cloud = 'offline';
+      }
+
+      setInterval(()=>{ if(navigator.onLine&&this.cloud==='offline') this.syncNow(); },20000);
+    },
+    /* atomic claim: the cloud only lets ONE device flip Unused to Used */
+    async claim(t){
+      const ts=Date.now();
+      if(sb&&this.cloud==='live'){
+        try{
+          const r=await Promise.race([sb.from('tickets').update({status:'Used',used_at:ts}).eq('number',t.number).eq('status','Unused').select(),
+            new Promise((_,j)=>setTimeout(()=>j(new Error('timeout')),3500))]);
+          if(r.error) throw r.error;
+          if(!r.data.length){
+            const g=await sb.from('tickets').select('*').eq('number',t.number).maybeSingle();
+            if(g.data){ this.applyRemote(g.data); return false; }
+            this.queue({op:'upsert',rows:[{...t,status:'Used',usedAt:ts}]});
+          }
+          t.status='Used'; t.usedAt=ts; return true;
+        }catch(e){}
+      }
+      t.status='Used'; t.usedAt=ts; this.queue({op:'claim',number:t.number,usedAt:ts}); return true;
+    },
+
+    
+/* ---------- login, staff, digital tickets, design sync ---------- */
+    get role(){ return this.user?this.user.role:''; },
+    async login(){
+      this.loginErr='';
+      if(!sb){ this.loginErr='Cloud library not loaded. Connect to the internet and reload.'; return; }
+      if(!navigator.onLine){ this.loginErr='You need an internet connection to sign in.'; return; }
+      this.loginBusy=true;
+      try{
+        const r=await sb.rpc('app_login',{p_user:this.lu,p_pass:this.lp});
+        if(r.error) throw r.error;
+        if(!r.data) this.loginErr='Incorrect username or password.';
+        else{ this.user=r.data; localStorage.setItem(SK,JSON.stringify(r.data)); this.lp=''; this.boot(); }
+      }catch(e){ this.loginErr=/function|schema cache|does not exist/i.test(e.message||'')?'Cloud setup is missing. Ask the Super Admin to run the setup SQL in Supabase.':'Could not reach the server. Check your connection and try again.'; }
+      this.loginBusy=false;
+    },
+    async logout(){
+      try{ if(sb&&this.user&&navigator.onLine) await sb.rpc('app_logout',{p_token:this.user.token}); }catch(e){}
+      localStorage.removeItem(SK); location.reload();
+    },
+    boot(){
+      this.tab=this.tabs[0][0];
+      if(this.tab==='gate') this.$nextTick(()=>this.startScan());
+      this.cloudStart(); this.checkSession();
+    },
+    async checkSession(){
+      if(!sb||!navigator.onLine||!this.user) return;
+      try{
+        const r=await sb.rpc('app_whoami',{p_token:this.user.token});
+        if(r.error) return;
+        if(!r.data) return this.logout();
+        if(r.data.role!==this.user.role){ this.user.role=r.data.role; localStorage.setItem(SK,JSON.stringify(this.user)); this.tab=this.tabs[0]?this.tabs[0][0]:'gate'; }
+      }catch(e){}
+    },
+    async loadStaff(){
+      if(!sb||!this.can('backup')) return;
+      const r=await sb.from('users').select('*').order('created_at'); if(!r.error) this.staff=r.data;
+    },
+    onUsers(p){
+      const u=p.eventType==='DELETE'?p.old:p.new; if(!u) return;
+      if(p.eventType==='DELETE'){
+        if(this.user&&u.username===this.user.username) return this.logout();
+        this.staff=this.staff.filter(x=>x.username!==u.username);
+      }else{
+        const i=this.staff.findIndex(x=>x.username===u.username);
+        if(i<0) this.staff.push(u); else Object.assign(this.staff[i],u);
+        if(this.user&&u.username===this.user.username&&u.role!==this.user.role) this.checkSession();
+      }
+    },
+    async staffCall(fn,args,okMsg){
+      this.staffMsg='';
+      try{
+        const r=await sb.rpc(fn,{p_token:this.user.token,...args});
+        if(r.error) throw r.error;
+        this.staffOk=true; this.staffMsg=okMsg; await this.loadStaff(); return true;
+      }catch(e){ this.staffOk=false; this.staffMsg=/duplicate/i.test(e.message||'')?'That username already exists.':(e.message||'Request failed.'); return false; }
+    },
+    async createStaff(){
+      if(!this.can('backup')) return;
+      const name=this.nu.trim().toLowerCase();
+      if(await this.staffCall('staff_create',{n_user:this.nu,n_pass:this.np,n_role:this.nr},`Account "${name}" created.`)){ this.nu=''; this.np=''; }
+    },
+    deleteStaff(u){ if(confirm(`Revoke access for "${u.username}"? They are signed out immediately.`)) this.staffCall('staff_delete',{t_user:u.username},`Access revoked for "${u.username}".`); },
+    resetPw(u){ const p=prompt(`New password for "${u.username}" (at least 6 characters):`); if(p) this.staffCall('staff_password',{t_user:u.username,n_pass:p},`Password updated for "${u.username}".`); },
+
+    link(t){
+      let b=this.appUrl||(/^https?:$/.test(location.protocol)?location.origin+location.pathname:'');
+      if(!b){
+        b=(prompt('Digital tickets need a web address. Enter the https:// address where this app is hosted:')||'').trim();
+        if(!/^https?:\/\//i.test(b)) return '';
+        this.appUrl=b; localStorage.setItem(AU,b);
+      }
+      return b.split('#')[0].split('?')[0]+`#/t/${t.number}.${t.code}`;
+    },
+    async shareTicket(t){
+      const u=this.link(t); if(!u) return;
+      const text=`Your ${t.tier} ticket${t.buyer?' for '+t.buyer:''} (${t.number}). Show this QR code at the gate: `;
+      try{
+        if(navigator.share) await navigator.share({title:'Digital ticket '+t.number,text,url:u});
+        else window.open('https://wa.me/?text='+encodeURIComponent(text+u),'_blank');
+        this.markShared(t);
+      }catch(e){}
+    },
+    async copyLink(t){
+      const u=this.link(t); if(!u) return;
+      try{ await navigator.clipboard.writeText(u); }catch(e){ prompt('Copy this ticket link:',u); }
+      this.markShared(t);
+    },
+    markShared(t){ if(!t.shared){ t.shared=true; this.queue({op:'shared',numbers:[t.number]}); } },
+    async guestInit(){
+      if(!sb){ this.gErr='Could not load this ticket. Check your connection.'; return; }
+      try{
+        const [t,d]=await Promise.all([sb.rpc('digital_ticket',{p_number:this.guest.number.toUpperCase(),p_code:this.guest.code.toUpperCase()}),sb.rpc('public_design')]);
+        if(t.error) throw t.error;
+        if(!t.data){ this.gErr='This ticket link is not valid.'; return; }
+        if(d.data) this.tpl=this.mergeTpl(d.data);
+        this.gt={...t.data,buyer:t.data.buyer||''};
+      }catch(e){ this.gErr='Could not load this ticket. Check your connection and try again.'; }
+    },
+
+    designChanged(){
+      if(!this.can('design')) return;
+      localStorage.setItem(DD,'1'); clearTimeout(dt); dt=setTimeout(()=>this.pushDesign(),2000);
+    },
+    async pushDesign(){
+      if(!sb||!navigator.onLine||!this.user||!this.can('design')) return;
+      try{
+        const r=await sb.rpc('save_design',{p_token:this.user.token,p_design:JSON.parse(JSON.stringify(this.tpl))});
+        if(r.error) throw r.error;
+        localStorage.removeItem(DD);
+      }catch(e){ if(e&&e.code) this.cloudErr=this.errMsg(e); }
+    },
+    async syncDesign(){
+      if(!sb||!this.can('design')) return;
+      if(localStorage.getItem(DD)) return this.pushDesign();
+      try{
+        const d=await sb.rpc('public_design'); if(d.error) throw d.error;
+        if(d.data){ quiet=true; this.tpl=this.mergeTpl(d.data); setTimeout(()=>{ quiet=false; },400); }
+        else this.pushDesign();
+      }catch(e){}
+    },
+
+    
+/* ---------- backup ---------- */
+    dbFile(){
+      const body=JSON.stringify({app:'gatekeeper',version:2,exportedAt:Date.now(),template:this.tpl,tickets:this.tickets});
+      return new File([body],`gatekeeper-${new Date().toISOString().slice(0,10)}.json`,{type:'application/json'});
+    },
+    exportDb(){ if(!this.can('backup')) return;
+      const f=this.dbFile(), a=document.createElement('a');
+      a.href=URL.createObjectURL(f); a.download=f.name; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+    },
+    async shareDb(){ if(!this.can('backup')) return;
+      const f=this.dbFile();
+      if(navigator.canShare&&navigator.canShare({files:[f]})){ try{ await navigator.share({files:[f],title:'Gatekeeper database'}); }catch(e){} }
+      else{ this.exportDb(); alert('Sharing is not supported here, so the file was downloaded instead. Send it from your files.'); }
+    },
+    async importFile(e){ if(!this.can('backup')) return;
+      const f=e.target.files[0]; if(!f) return;
+      try{
+        const d=JSON.parse(await f.text());
+        const ok=t=>t&&typeof t.number==='string'&&['Ordinary','VIP','VVIP'].includes(t.tier)&&t.code&&t.salt;
+        if(!Array.isArray(d.tickets)||!d.tickets.every(ok)) throw new Error('bad');
+        const inc=d.tickets.map(t=>({buyer:'',status:'Unused',createdAt:Date.now(),usedAt:null,printed:false,...t}));
+        if(this.impMode==='replace') this.tickets=inc;
+        else{
+          const map=new Map(this.tickets.map(t=>[t.number,t])), add=[];
+          inc.forEach(t=>{ const l=map.get(t.number);
+            if(!l) add.push(t);
+            else{ if(t.status==='Used'&&(l.status!=='Used'||t.usedAt<l.usedAt)){ l.status='Used'; l.usedAt=t.usedAt; }
+              l.printed=l.printed||t.printed; if(!l.buyer) l.buyer=t.buyer; } });
+          this.tickets=[...this.tickets,...add];
+        }
+        if(this.impDesign&&d.template) this.tpl=this.mergeTpl(d.template);
+        if(this.impMode==='replace') this.queue({op:'purge'}); this.queue({op:'upsert',rows:this.tickets.map(t=>({...t}))});
+        this.msgOk=true; this.msg=`Imported ${inc.length} tickets. This device now holds ${this.tickets.length}.`;
+      }catch(err){ this.msgOk=false; this.msg='That file is not a valid Gatekeeper database.'; }
+      e.target.value='';
+    }
+  };
+}
+</script>
+</body>
+</html>
