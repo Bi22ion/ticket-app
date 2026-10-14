@@ -663,6 +663,7 @@ end $$;</pre>
       <div class="text-7xl mb-3" x-text="result.ok?'✓':'✕'"></div>
       <div class="text-3xl md:text-5xl font-bold mb-3" x-text="result.title"></div>
       <div class="text-xl md:text-2xl mb-6" x-text="result.detail"></div>
+      <div x-show="result.t&&result.t.printed" class="mb-6 rounded-xl border border-amber-200/40 bg-amber-100/20 px-4 py-3 text-base font-semibold text-amber-50">This ticket is already marked printed. Do not print a duplicate copy.</div>
       <template x-if="result.t">
         <div>
           <div class="text-5xl md:text-7xl font-black mb-2" x-text="result.t.tier.toUpperCase()"></div>
@@ -965,18 +966,29 @@ function app(){
 
     async onScan(text,manual){
       if(!this.can('gate')||this.locked||!String(text||'').trim()) return;
-      this.locked=true; let t=null;
+      this.locked=true; let t=null, scannedCode='';
+      const raw=String(text).trim();
       if(manual){
-        const m=String(text).trim().toUpperCase().match(/^(ORD|VIP|VVIP)-?(\d+)$/);
-        if(m) t=this.tickets.find(x=>x.number===`${m[1]}-${m[2].padStart(4,'0')}`);
+        const m=raw.toUpperCase().match(/^(ORD|VIP|VVIP)-?(\d+)$/);
+        if(m) scannedCode='';
+        const number=m?`${m[1]}-${m[2].padStart(4,'0')}`:'';
+        if(number&&sb&&navigator.onLine){
+          const r=await sb.from('tickets').select('number, tier, code, buyer, status, created_at, used_at, printed, shared').eq('number',number).maybeSingle();
+          if(!r.error&&r.data) t=this.fromRow(r.data);
+        }else if(number) t=this.tickets.find(x=>x.number===number);
       }else{
-        const [tag,num,code]=String(text).trim().split('|');
-        if(tag==='TKT') t=this.tickets.find(x=>x.number===num&&x.code===code);
+        const [tag,num,code]=raw.split('|');
+        if(tag==='TKT'){ scannedCode=String(code||'').toUpperCase();
+          if(sb&&navigator.onLine){
+            const r=await sb.from('tickets').select('number, tier, code, buyer, status, created_at, used_at, printed, shared').eq('number',num).maybeSingle();
+            if(!r.error&&r.data) t=this.fromRow(r.data);
+          }else t=this.tickets.find(x=>x.number===num);
+        }
       }
-      if(t&&(await this.makeCode(t.number,t.salt))!==t.code) t=null;
-      if(!t) this.result={ok:false,title:'INVALID TICKET',detail:'NOT FOUND IN DATABASE'};
-      else if(t.status==='Used') this.result={ok:false,title:'DUPLICATE TICKET',detail:'ALREADY SCANNED AT '+this.fmt(t.usedAt),t};
-      else{ const ok=await this.claim(t); this.result=ok?{ok:true,title:'VALID TICKET',detail:'Entry allowed',t:{...t}}:{ok:false,title:'DUPLICATE TICKET',detail:'ALREADY SCANNED AT '+this.fmt(t.usedAt),t}; }
+      if(t&&scannedCode&&String(t.code).toUpperCase()!==scannedCode) t=null;
+      if(!t) this.result={ok:false,title:'INVALID OR FAKE TICKET',detail:'ACCESS DENIED — NOT FOUND IN DATABASE'};
+      else if(t.status==='Used') this.result={ok:false,title:'TICKET ALREADY USED',detail:'ALREADY SCANNED AT '+this.fmt(t.usedAt),t};
+      else{ const ok=await this.claim(t); this.result=ok?{ok:true,title:'VALID TICKET',detail:t.printed?'ENTRY ALLOWED · ALREADY PRINTED — DO NOT PRINT A DUPLICATE':'ENTRY ALLOWED',t:{...t}}:{ok:false,title:'TICKET ALREADY USED',detail:'ALREADY SCANNED AT '+this.fmt(t.usedAt),t}; }
       this.beep(this.result.ok);
       if(navigator.vibrate) navigator.vibrate(this.result.ok?120:[200,100,200]);
     },
@@ -1065,8 +1077,7 @@ function app(){
       this.syncNow();
       
       try {
-        // Use a completely unique channel name every time to avoid SDK cache collisions
-        const channelName = 'live_sync_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+        const channelName = 'table-db-changes';
         
         sb.channel(channelName)
           .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets' }, p => this.onRemote(p))
