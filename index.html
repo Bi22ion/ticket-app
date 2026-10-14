@@ -724,7 +724,7 @@ function app(){
   const DB='gatekeeper.tickets.v2', TP='gatekeeper.template.v2', PQ='gatekeeper.pending.v1', SF='gatekeeper.synced.v1', SK='gatekeeper.session.v1', AU='gatekeeper.appurl', DD='gatekeeper.designdirty', qc={}, sb=supabaseClient;
   let dt, quiet=false;
   const SESS=(()=>{ try{ const x=JSON.parse(localStorage.getItem(SK)||'null'); return x&&x.username&&x.role&&x.token?x:null; }catch(e){ return null; } })();
-  const GM=location.hash.match(/^#\/t\/([A-Za-z]+-\d+)\.([A-Za-z0-9]+)$/), GUEST=GM?{number:GM[1],code:GM[2]}:null;
+  const GUEST=location.hash.startsWith('#/t/')?(()=>{ const ticketId=decodeURIComponent(location.hash.slice(4)); const dot=ticketId.lastIndexOf('.'); return dot>0?{ticketId,number:ticketId.slice(0,dot),code:ticketId.slice(dot+1)}:null; })():null;
   const FONTS={'Montserrat':"Montserrat,system-ui,sans-serif",'Poppins':"Poppins,system-ui,sans-serif",'Inter':"Inter,system-ui,sans-serif",'Oswald':"Oswald,Impact,sans-serif",'Playfair Display':"'Playfair Display',Georgia,serif",'Cinzel':"Cinzel,Georgia,serif",'Space Grotesk':"'Space Grotesk',system-ui,sans-serif",'Monospace':"ui-monospace,Menlo,Consolas,monospace"};
   const T0=(label,x,y,size,color,weight,font,o)=>({label,x,y,size,color,weight,font,ls:0,align:'left',transform:'none',sh:1,shc:'#000000',show:true,...o});
   const defaultTpl=()=>({bg:'',logo:'',bgColor:'#1b2430',eventTitle:'Summer Fest 2026',aw:2,ah:1,radius:2,shadow:40,blur:0,bgOp:1,
@@ -1192,7 +1192,14 @@ function app(){
     async guestInit(){
       if(!sb){ this.gErr='Could not load this ticket. Check your connection.'; return; }
       try{
-        const [t,d]=await Promise.all([sb.from('tickets').select('number, tier, code, buyer, status, created_at, used_at, printed, shared').eq('number',this.guest.number.toUpperCase()).single(),sb.rpc('public_design')]);
+        const ticketNumber=this.guest.number.toUpperCase();
+        const [t,d]=await Promise.all([
+          sb.from('tickets')
+            .select('number, tier, code, buyer, status, created_at, used_at, printed, shared')
+            .eq('number',ticketNumber)
+            .single(),
+          sb.rpc('public_design')
+        ]);
         if(t.error) throw t.error;
         if(!t.data||t.data.code.toUpperCase()!==this.guest.code.toUpperCase()){ this.gErr='This ticket link is not valid.'; return; }
         if(d.data) this.tpl=this.mergeTpl(d.data);
