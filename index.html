@@ -51,7 +51,49 @@
 <body x-data="app()" x-init="init()" @pointermove.window="dragMove($event)" @pointerup.window="dragEnd()" @keydown.enter.window="if(result) nextScan()">
 <style x-text="`@page{size:${paper};margin:10mm}`"></style>
 
-<header x-show="user&&!guest" x-cloak class="bg-[#1b2430] text-white ui">
+  <!-- PUBLIC TICKET REQUEST -->
+  <section x-show="request&&!guest" x-cloak class="min-h-screen bg-stone-100 px-4 py-8 ui">
+    <div class="mx-auto max-w-2xl space-y-5">
+      <div class="rounded-2xl bg-[#1b2430] p-6 text-white shadow-lg">
+        <p class="text-xs font-semibold uppercase tracking-[.2em] text-sky-300">Kivvulu ticketing</p>
+        <h1 class="mt-2 text-3xl font-bold">Get your digital ticket</h1>
+        <p class="mt-2 text-sm text-stone-300">Choose your access level, complete the payment simulation, and receive your ticket pass instantly.</p>
+      </div>
+      <form @submit.prevent="submitRequest()" class="card space-y-5 shadow-sm">
+        <div>
+          <h2 class="text-lg font-bold text-stone-800">Ticket details</h2>
+          <div class="mt-3 grid gap-3 sm:grid-cols-3">
+            <template x-for="tier in requestTiers" :key="tier.name">
+              <label class="cursor-pointer rounded-xl border p-3 transition" :class="requestTier===tier.name?'border-sky-500 bg-sky-50 ring-2 ring-sky-200':'border-stone-200 hover:border-stone-400'">
+                <input type="radio" class="sr-only" name="request-tier" :value="tier.name" x-model="requestTier">
+                <span class="block text-sm font-bold" x-text="tier.name"></span>
+                <span class="mt-1 block text-sm text-stone-600" x-text="formatUgx(tier.price)"></span>
+              </label>
+            </template>
+          </div>
+        </div>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class="lbl">Full name<input class="inp mt-1" required x-model.trim="requestForm.name" autocomplete="name"></label>
+          <label class="lbl">Phone number<input class="inp mt-1" required type="tel" x-model.trim="requestForm.phone" autocomplete="tel" placeholder="07xx xxx xxx"></label>
+          <label class="lbl sm:col-span-2">Email address<input class="inp mt-1" required type="email" x-model.trim="requestForm.email" autocomplete="email"></label>
+        </div>
+        <fieldset>
+          <legend class="lbl mb-2">Payment method</legend>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="cursor-pointer rounded-xl border p-3" :class="requestForm.payment==='Mobile Money'?'border-sky-500 bg-sky-50':'border-stone-200'"><input class="mr-2" type="radio" value="Mobile Money" x-model="requestForm.payment">Mobile Money <span class="text-xs text-stone-500">MTN / Airtel prompt</span></label>
+            <label class="cursor-pointer rounded-xl border p-3" :class="requestForm.payment==='Card'?'border-sky-500 bg-sky-50':'border-stone-200'"><input class="mr-2" type="radio" value="Card" x-model="requestForm.payment">Credit / debit card</label>
+          </div>
+        </fieldset>
+        <div x-show="requestForm.payment==='Mobile Money'" x-cloak><label class="lbl">Mobile Money number<input class="inp mt-1" type="tel" x-model.trim="requestForm.paymentPhone" placeholder="07xx xxx xxx"></label></div>
+        <div x-show="requestForm.payment==='Card'" x-cloak class="grid gap-3 sm:grid-cols-2"><label class="lbl sm:col-span-2">Card number<input class="inp mt-1" inputmode="numeric" maxlength="19" x-model.trim="requestForm.cardNumber" placeholder="Simulation only"></label><label class="lbl">Expiry<input class="inp mt-1" x-model.trim="requestForm.expiry" placeholder="MM/YY"></label><label class="lbl">CVV<input class="inp mt-1" maxlength="4" x-model.trim="requestForm.cvv" placeholder="123"></label></div>
+        <div class="flex items-center justify-between border-t border-stone-200 pt-4"><span class="font-bold text-stone-800">Total: <span x-text="formatUgx(requestPrice)"></span></span><button class="btn-dark" :disabled="requestBusy" x-text="requestBusy?'Processing…':'Pay and get ticket'"></button></div>
+        <p x-show="requestMessage" x-text="requestMessage" class="rounded-lg p-3 text-sm" :class="requestOk?'bg-emerald-50 text-emerald-700':'bg-rose-50 text-rose-700'"></p>
+      </form>
+      <div x-show="requestTicket" x-cloak class="card text-center shadow-sm"><p class="text-sm font-semibold text-emerald-700">Payment successful. Your digital pass is ready.</p><p class="mt-2 font-mono text-xl font-bold" x-text="requestTicket?.number"></p><a class="btn-dark mt-4 inline-block" :href="requestTicket&&ticketHref(requestTicket)">Open digital ticket</a></div>
+    </div>
+  </section>
+
+  <header x-show="user&&!guest&&!request" x-cloak class="bg-[#1b2430] text-white ui">
   <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
     <h1 class="text-2xl tracking-tight">Gatekeeper</h1>
     <div class="flex items-center gap-2 ml-auto text-xs">
@@ -726,6 +768,7 @@ function app(){
   let dt, quiet=false;
   const SESS=(()=>{ try{ const x=JSON.parse(localStorage.getItem(SK)||'null'); return x&&x.username&&x.role&&x.token?x:null; }catch(e){ return null; } })();
   const GUEST=location.hash.startsWith('#/t/')?(()=>{ const ticketId=decodeURIComponent(location.hash.slice(4)); const dot=ticketId.lastIndexOf('.'); return dot>0?{ticketId,number:ticketId.slice(0,dot),code:ticketId.slice(dot+1)}:null; })():null;
+  const REQUEST=location.hash==='#/request';
   const FONTS={'Montserrat':"Montserrat,system-ui,sans-serif",'Poppins':"Poppins,system-ui,sans-serif",'Inter':"Inter,system-ui,sans-serif",'Oswald':"Oswald,Impact,sans-serif",'Playfair Display':"'Playfair Display',Georgia,serif",'Cinzel':"Cinzel,Georgia,serif",'Space Grotesk':"'Space Grotesk',system-ui,sans-serif",'Monospace':"ui-monospace,Menlo,Consolas,monospace"};
   const T0=(label,x,y,size,color,weight,font,o)=>({label,x,y,size,color,weight,font,ls:0,align:'left',transform:'none',sh:1,shc:'#000000',show:true,...o});
   const defaultTpl=()=>({bg:'',logo:'',bgColor:'#1b2430',eventTitle:'Summer Fest 2026',aw:2,ah:1,radius:2,shadow:40,blur:0,bgOp:1,
@@ -759,7 +802,7 @@ function app(){
         serial:{color:'#5b2a14',font:'Monospace',weight:700,align:'center',x:36,y:80,size:4.5,sh:0},qr:{x:66,y:16,size:28}}}
   };
   return {
-    tab:SESS&&SESS.role==='gatekeeper'?'gate':'design', user:SESS, guest:GUEST, gt:null, gErr:'', lu:'', lp:'', showPw:false, loginErr:'', loginBusy:false, staff:[], nu:'', np:'', nr:'gatekeeper', staffMsg:'', staffOk:true, appUrl:localStorage.getItem(AU)||'', cloud:'offline', cloudErr:'', pending:[], syncing:false, flushing:false, tickets:[], tpl:defaultTpl(), pTier:'VIP', pName:'Amina Nakato', dTab:'canvas', selKey:'title', view:'edit', guides:null, tilt:{rx:0,ry:0,gx:50,gy:50}, presets:PRESETS, fonts:FONTS,
+    tab:SESS&&SESS.role==='gatekeeper'?'gate':'design', user:SESS, guest:GUEST, request:REQUEST, gt:null, gErr:'', requestTiers:[{name:'Ordinary',price:20000},{name:'VIP',price:50000},{name:'VVIP',price:100000}], requestTier:'Ordinary', requestForm:{name:'',phone:'',email:'',payment:'Mobile Money',paymentPhone:'',cardNumber:'',expiry:'',cvv:''}, requestBusy:false, requestMessage:'', requestOk:false, requestTicket:null, lu:'', lp:'', showPw:false, loginErr:'', loginBusy:false, staff:[], nu:'', np:'', nr:'gatekeeper', staffMsg:'', staffOk:true, appUrl:localStorage.getItem(AU)||'', cloud:'offline', cloudErr:'', pending:[], syncing:false, flushing:false, tickets:[], tpl:defaultTpl(), pTier:'VIP', pName:'Amina Nakato', dTab:'canvas', selKey:'title', view:'edit', guides:null, tilt:{rx:0,ry:0,gx:50,gy:50}, presets:PRESETS, fonts:FONTS,
     gTier:'Ordinary', gQty:10, gName:'', busy:false, q:'', fTier:'', fStatus:'', sel:{},
     perSheet:6, paper:'A4', printHTML:'', drag:null,
     scanner:null, camError:'', result:null, locked:false, man:'',
@@ -1200,6 +1243,30 @@ function app(){
       this.markShared(t);
     },
     markShared(t){ if(!t.shared){ t.shared=true; this.queue({op:'shared',numbers:[t.number]}); } },
+    get requestPrice(){ return this.requestTiers.find(x=>x.name===this.requestTier)?.price||0; },
+    formatUgx(value){ return new Intl.NumberFormat('en-UG',{style:'currency',currency:'UGX',maximumFractionDigits:0}).format(value||0); },
+    ticketHref(t){ return '#/t/'+encodeURIComponent(t.number+'.'+t.code); },
+    async submitRequest(){
+      this.requestMessage=''; this.requestTicket=null;
+      if(!sb||!navigator.onLine){ this.requestOk=false; this.requestMessage='A live internet connection is required to complete a ticket request.'; return; }
+      const f=this.requestForm;
+      if(f.payment==='Mobile Money'&&!f.paymentPhone){ this.requestOk=false; this.requestMessage='Enter the Mobile Money number used for payment.'; return; }
+      if(f.payment==='Card'&&(!f.cardNumber||!f.expiry||!f.cvv)){ this.requestOk=false; this.requestMessage='Complete the card simulation fields to continue.'; return; }
+      this.requestBusy=true;
+      try{
+        const prefix={Ordinary:'ORD',VIP:'VIP',VVIP:'VVIP'}[this.requestTier];
+        const latest=await sb.from('tickets').select('number').eq('tier',this.requestTier).like('number',prefix+'-%').order('number',{ascending:false}).limit(1).maybeSingle();
+        if(latest.error) throw latest.error;
+        const last=latest.data?parseInt(String(latest.data.number).split('-').pop(),10)||0:0;
+        const number=prefix+'-'+String(last+1).padStart(4,'0'), salt=this.rnd(12), code=await this.makeCode(number,salt);
+        const buyer=`${f.name} | ${f.phone} | ${f.email} | ${f.payment}`;
+        const row={number,tier:this.requestTier,salt,code,buyer,status:'Unused',created_at:Date.now(),used_at:null,printed:false,shared:false};
+        const created=await sb.from('tickets').insert(row).select('number, tier, code, buyer, status, created_at, used_at, printed, shared').single();
+        if(created.error) throw created.error;
+        this.requestTicket=created.data; this.requestOk=true; this.requestMessage=`Payment received: ${this.formatUgx(this.requestPrice)}. Ticket ${number} was created.`;
+      }catch(e){ this.requestOk=false; this.requestMessage='The ticket could not be created. Please try again.'; }
+      this.requestBusy=false;
+    },
     async guestInit(){
       if(!sb){ this.gErr='Could not load this ticket. Check your connection.'; return; }
       try{
