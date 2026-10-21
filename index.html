@@ -66,7 +66,7 @@
             <template x-for="tier in requestTiers" :key="tier.name">
               <label class="cursor-pointer rounded-xl border p-3 transition" :class="requestTier===tier.name?'border-sky-500 bg-sky-50 ring-2 ring-sky-200':'border-stone-200 hover:border-stone-400'">
                 <input type="radio" class="sr-only" name="request-tier" :value="tier.name" x-model="requestTier">
-                <span class="block text-sm font-bold" x-text="tier.name"></span>
+                <span class="block text-sm font-bold" x-text="tierLabel(tier.name)"></span>
                 <span class="mt-1 block text-sm text-stone-600" x-text="formatUgx(tier.price)"></span>
               </label>
             </template>
@@ -122,8 +122,8 @@
           <button :data-tip="tip" @click="view=v" class="px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-300" :class="view===v?'bg-sky-500 text-white shadow':'text-stone-400 hover:text-white'" x-text="l"></button>
         </template>
       </div>
-      <select x-model="pTier" class="dinp !w-auto" aria-label="Preview tier"><option>Ordinary</option><option>VIP</option><option>VVIP</option></select>
-      <input x-model="pName" class="dinp !w-40" placeholder="Sample name" aria-label="Sample name">
+      <select x-model="pTier" class="dinp !w-auto" aria-label="Preview tier"><option>Ordinary</option><option>VIP</option><option>Table</option></select>
+      <input x-model="pName" class="dinp !w-40" placeholder="Internal note (not printed)" aria-label="Internal note">
     </div>
     <div class="rounded-xl p-4 sm:p-8 min-h-[320px] flex items-center justify-center" style="background-color:#12151b;background-image:radial-gradient(#2a2f3a 1px,transparent 1px);background-size:18px 18px">
       <div x-show="view==='edit'" class="w-full">
@@ -216,12 +216,22 @@
       <!-- Brand -->
       <div x-show="dTab==='brand'" x-transition.opacity.duration.300ms class="space-y-4">
         <label class="dlbl">Event title <input x-model="tpl.eventTitle" class="dinp mt-1"></label>
+        <label class="dlbl">Presenter <input x-model="tpl.eventOrganizer" class="dinp mt-1"></label>
+        <label class="dlbl">Subtitle <input x-model="tpl.eventSub" class="dinp mt-1"></label>
+        <label class="dlbl">Date <input x-model="tpl.eventDate" class="dinp mt-1"></label>
+        <label class="dlbl">Venue <input x-model="tpl.eventVenue" class="dinp mt-1"></label>
+        <label class="dlbl">Reservations <input x-model="tpl.eventContact" class="dinp mt-1"></label>
         <div>
           <div class="dlbl mb-1">Background artwork</div>
           <div class="flex gap-2">
             <label class="dbtn flex-1 text-center cursor-pointer">Upload image<input type="file" accept="image/*" class="hidden" @change="uploadImg($event,'bg',2000,'image/jpeg')"></label>
             <button class="dbtn" x-show="tpl.bg" @click="tpl.bg=''">Remove</button></div>
-          <div x-show="tpl.bg" class="mt-2 h-16 rounded-lg bg-cover bg-center border border-white/10" :style="{'background-image':`url(${tpl.bg})`}"></div>
+          <div x-show="tpl.bg" class="mt-2 space-y-2">
+            <div class="h-16 rounded-lg bg-cover border border-white/10" :style="{'background-image':`url(${tpl.bg})`,'background-size':(tpl.bgScale*100)+'%','background-position':tpl.bgX+'% '+tpl.bgY+'%'}"></div>
+            <label class="dlbl">Flyer horizontal position <input type="range" min="0" max="100" x-model.number="tpl.bgX"></label>
+            <label class="dlbl">Flyer vertical position <input type="range" min="0" max="100" x-model.number="tpl.bgY"></label>
+            <label class="dlbl">Flyer size <span class="float-right text-stone-300" x-text="Math.round(tpl.bgScale*100)+'%'"></span><input type="range" min="0.5" max="2.5" step="0.05" x-model.number="tpl.bgScale"></label>
+          </div>
         </div>
         <div>
           <div class="dlbl mb-1">Logo or sponsor badge</div>
@@ -295,9 +305,9 @@
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
       <label class="lbl font-medium text-stone-700">Ticket Tier 
         <select x-model="gTier" class="inp mt-1.5 focus:ring-2 focus:ring-sky-500">
-          <option>Ordinary</option>
-          <option>VIP</option>
-          <option>VVIP</option>
+<option value="Ordinary">GEN</option>
+  <option value="VIP">VIP</option>
+  <option value="VVIP">TABLE</option>
         </select>
       </label>
       <label class="lbl font-medium text-stone-700">Quantity (Batch Count) 
@@ -346,10 +356,10 @@
         <input x-model="q" placeholder="Search serial, name or secure code..." class="inp pl-3 bg-white" aria-label="Search tickets">
       </div>
       <select x-model="fTier" class="inp !w-36 bg-white" aria-label="Filter by tier">
-        <option value="">All Tiers</option>
-        <option>Ordinary</option>
-        <option>VIP</option>
-        <option>VVIP</option>
+<option value="">All Tiers</option>
+  <option value="Ordinary">GEN</option>
+  <option value="VIP">VIP</option>
+  <option value="VVIP">TABLE</option>
       </select>
       <select x-model="fStatus" class="inp !w-36 bg-white" aria-label="Filter by status">
         <option value="">All Statuses</option>
@@ -390,7 +400,7 @@
               </td>
               <td class="p-3 font-mono font-semibold text-stone-800" x-text="t.number"></td>
               <td class="p-3">
-                <span class="px-2.5 py-1 rounded-full text-xs font-bold tracking-wide shadow-2xs" :class="tierClass(t.tier)" x-text="t.tier"></span>
+                <span class="px-2.5 py-1 rounded-full text-xs font-bold tracking-wide shadow-2xs" :class="tierClass(t.tier)" x-text="tierLabel(t.tier)"></span>
               </td>
               <td class="p-3">
                 <input x-model="t.buyer" @change="patchTicket(t)" placeholder="Optional guest name" aria-label="Attendee name" class="w-40 bg-transparent border-b border-dashed border-stone-300 hover:border-stone-500 focus:border-sky-500 focus:outline-hidden py-1 text-xs">
@@ -771,14 +781,22 @@ function app(){
   const REQUEST=location.hash==='#/request';
   const FONTS={'Montserrat':"Montserrat,system-ui,sans-serif",'Poppins':"Poppins,system-ui,sans-serif",'Inter':"Inter,system-ui,sans-serif",'Oswald':"Oswald,Impact,sans-serif",'Playfair Display':"'Playfair Display',Georgia,serif",'Cinzel':"Cinzel,Georgia,serif",'Space Grotesk':"'Space Grotesk',system-ui,sans-serif",'Monospace':"ui-monospace,Menlo,Consolas,monospace"};
   const T0=(label,x,y,size,color,weight,font,o)=>({label,x,y,size,color,weight,font,ls:0,align:'left',transform:'none',sh:1,shc:'#000000',show:true,...o});
-  const defaultTpl=()=>({bg:'',logo:'',bgColor:'#1b2430',eventTitle:'Summer Fest 2026',aw:2,ah:1,radius:2,shadow:40,blur:0,bgOp:1,
-    gType:'none',g1:'#7c3aed',g2:'#0ea5e9',gAngle:135,gOp:.6,order:['title','tier','name','serial','logo','qr'],
-    el:{title:T0('Event title',5,8,6.5,'#ffffff',700,'Montserrat',{transform:'uppercase',ls:.05}),
-      tier:T0('Tier label',5,30,10,'#fbbf24',900,'Montserrat',{transform:'uppercase'}),
-      name:T0('Attendee name',5,62,5,'#ffffff',500,'Inter'),
-      serial:T0('Serial number',5,80,4.5,'#ffffff',500,'Monospace'),
-      logo:{label:'Logo / sponsor',x:80,y:6,size:14,show:true},
-      qr:{label:'QR code',x:68,y:18,size:27,show:true}}});
+  const defaultTpl=()=>({bg:'https://hebbkx1anhila5yf.public.blob.vercel-storage.com/qfp-Ml4ytytXTzMrBARws7YTF4Vupb3VAP.jpeg',logo:'',bgColor:'#5a0a0f',eventTitle:'Legacy of a Queen',eventOrganizer:'Queens Events presents',eventSub:'Queen Florence · Live in Concert',eventDate:'Friday 22 January 2027',eventVenue:'Front Page Hotel, Namasuba',eventContact:'Reservations: 0764733540 / 0752222294',eventTerms:'One-time entry · Copies are void · Lost or shared tickets are not replaceable',bgX:50,bgY:50,bgScale:1,aw:2,ah:1,radius:2,shadow:55,blur:0,bgOp:.72,
+    gType:'linear',g1:'#7a0a12',g2:'#12030a',gAngle:135,gOp:.45,order:['organizer','title','subtitle','date','venue','tier','seat','serial','check','contact','terms','logo','qr'],
+    el:{organizer:T0('Presenter',5,7,2.4,'#f6e3a1',500,'Cinzel',{transform:'uppercase',ls:.22}),
+      title:T0('Event title',5,14,5.4,'#ffffff',900,'Cinzel',{transform:'uppercase',ls:.04}),
+      subtitle:T0('Subtitle',5,32,2.8,'#e9b949',700,'Playfair Display'),
+      date:T0('Date',5,52,3.4,'#ffffff',700,'Montserrat'),
+      venue:T0('Venue',5,61,3,'#f1e0b4',500,'Montserrat'),
+      tier:T0('Ticket type',5,73,6,'#e9b949',900,'Cinzel',{transform:'uppercase'}),
+      seat:T0('Table & seat',38,76,3.4,'#ffffff',700,'Montserrat',{transform:'uppercase'}),
+      name:T0('Internal note (never printed)',5,62,5,'#ffffff',500,'Inter',{show:false}),
+      serial:T0('Serial number',70,67,2.6,'#ffffff',500,'Monospace'),
+      check:T0('Check code',70,73,2.2,'#e9b949',700,'Monospace'),
+      contact:T0('Reservations',5,88,2,'#f1e0b4',500,'Inter'),
+      terms:T0('Terms line',5,93,1.7,'#f1e0b4',500,'Inter'),
+      logo:{label:'Logo / sponsor',x:86,y:3,size:9,show:true},
+      qr:{label:'QR code',x:70,y:15,size:25,show:true}}});
   const PRESETS={
     'VIP Neon Cyberpunk':{p:{bgColor:'#0a0014',gType:'linear',g1:'#2b0057',g2:'#003a5c',gAngle:135,radius:3,shadow:70},
       el:{title:{color:'#00f0ff',font:'Space Grotesk',weight:700,ls:.15,sh:2,shc:'#00f0ff',x:5,y:8,size:5.5,transform:'uppercase'},
@@ -802,12 +820,13 @@ function app(){
         serial:{color:'#5b2a14',font:'Monospace',weight:700,align:'center',x:36,y:80,size:4.5,sh:0},qr:{x:66,y:16,size:28}}}
   };
   return {
-    tab:SESS&&SESS.role==='gatekeeper'?'gate':'design', user:SESS, guest:GUEST, request:REQUEST, gt:null, gErr:'', requestTiers:[{name:'Ordinary',price:20000},{name:'VIP',price:50000},{name:'VVIP',price:100000}], requestTier:'Ordinary', requestForm:{name:'',phone:'',email:'',payment:'Mobile Money',paymentPhone:'',cardNumber:'',expiry:'',cvv:''}, requestBusy:false, requestMessage:'', requestOk:false, requestTicket:null, lu:'', lp:'', showPw:false, loginErr:'', loginBusy:false, staff:[], nu:'', np:'', nr:'gatekeeper', staffMsg:'', staffOk:true, appUrl:localStorage.getItem(AU)||'', cloud:'offline', cloudErr:'', pending:[], syncing:false, flushing:false, tickets:[], tpl:defaultTpl(), pTier:'VIP', pName:'Amina Nakato', dTab:'canvas', selKey:'title', view:'edit', guides:null, tilt:{rx:0,ry:0,gx:50,gy:50}, presets:PRESETS, fonts:FONTS,
+    tab:SESS&&SESS.role==='gatekeeper'?'gate':'design', user:SESS, guest:GUEST, request:REQUEST, gt:null, gErr:'', requestTiers:[{name:'Ordinary',price:50000},{name:'VIP',price:100000},{name:'VVIP',price:3000000}], requestTier:'Ordinary', requestForm:{name:'',phone:'',email:'',payment:'Mobile Money',paymentPhone:'',cardNumber:'',expiry:'',cvv:''}, requestBusy:false, requestMessage:'', requestOk:false, requestTicket:null, lu:'', lp:'', showPw:false, loginErr:'', loginBusy:false, staff:[], nu:'', np:'', nr:'gatekeeper', staffMsg:'', staffOk:true, appUrl:localStorage.getItem(AU)||'', cloud:'offline', cloudErr:'', pending:[], syncing:false, flushing:false, tickets:[], tpl:defaultTpl(), pTier:'VIP', pName:'Amina Nakato', dTab:'canvas', selKey:'title', view:'edit', guides:null, tilt:{rx:0,ry:0,gx:50,gy:50}, presets:PRESETS, fonts:FONTS,
     gTier:'Ordinary', gQty:10, gName:'', busy:false, q:'', fTier:'', fStatus:'', sel:{},
     perSheet:6, paper:'A4', printHTML:'', drag:null,
     scanner:null, camError:'', result:null, locked:false, man:'',
     impMode:'merge', impDesign:true, msg:'', msgOk:true,
-    access:{Ordinary:'General admission',VIP:'VIP area access',VVIP:'All-access (VVIP)'},
+    access:{Ordinary:'General admission',VIP:'VIP area access',Table:'Table seating'},
+    tierLabel(t){ return {Ordinary:'GEN',VIP:'VIP',VVIP:'TABLE'}[t]||t; },
 
     init(){
       try{ this.tickets=JSON.parse(localStorage.getItem(DB)||'[]'); }catch(e){}
@@ -832,9 +851,9 @@ function app(){
     save(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){ alert('Browser storage is full. Export a backup and use a smaller background image.'); } },
     fmt(ts){ return new Date(ts).toLocaleString(); },
     esc(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); },
-    tierClass(t){ return {Ordinary:'bg-stone-200 text-stone-800',VIP:'bg-amber-100 text-amber-900',VVIP:'bg-violet-100 text-violet-900'}[t]; },
+    tierClass(t){ return {Ordinary:'bg-stone-200 text-stone-800',VIP:'bg-amber-100 text-amber-900',VVIP:'bg-blue-100 text-blue-900'}[t]||'bg-stone-200 text-stone-800'; },
 
-    get sample(){ return {number:{Ordinary:'ORD',VIP:'VIP',VVIP:'VVIP'}[this.pTier]+'-0001',tier:this.pTier,buyer:this.pName,code:'SAMPLE000000'}; },
+    get sample(){ return {number:{Ordinary:'GEN',VIP:'VIP',VVIP:'TBL'}[this.pTier]+'-0001',tier:this.pTier,buyer:this.pName,code:'SAMPLE000000'}; },
     get selCount(){ return this.tickets.filter(t=>this.sel[t.number]).length; },
     get filtered(){
       const q=this.q.trim().toLowerCase();
@@ -850,7 +869,8 @@ function app(){
     },
 
     /* ---------- design studio ---------- */
-    isText(k){ return k!=='qr'&&k!=='logo'; },
+    isImg(k){ return k==='qr'||k==='logo'; },
+    isText(k){ return !this.isImg(k); },
     get cur(){ return this.selKey?this.tpl.el[this.selKey]:null; },
     get ratio(){ return Math.max(.25,Math.min(4,(this.tpl.aw||1)/(this.tpl.ah||1))); },
     get maxW(){ return 'min(100%,'+(58*this.ratio).toFixed(1)+'vh)'; },
@@ -863,10 +883,10 @@ function app(){
     },
     ticketHTML(t,edit,fx){
       const T=this.tpl, E=T.el, sel=edit?this.selKey:null;
-      const txt={title:T.eventTitle,tier:t.tier,name:t.buyer||'',serial:t.number};
+      const txt={organizer:T.eventOrganizer,title:T.eventTitle,subtitle:T.eventSub,date:T.eventDate,venue:T.eventVenue,tier:this.tierLabel(t.tier),seat:t.tier==='Table'&&t.tableId?`TABLE ${t.tableId} · SEAT ${t.seatNo||''}`:'',name:'',serial:t.number,check:t.code?`CHECK ${String(t.code).slice(0,6).toUpperCase()}`:'',contact:T.eventContact,terms:T.eventTerms};
       const shadow=fx&&T.shadow>0?`box-shadow:0 ${T.shadow*.25}px ${T.shadow*.7}px rgba(0,0,0,.45);`:'';
       let h=`<div style="container-type:inline-size;width:100%"><div style="position:relative;aspect-ratio:${this.ratio};overflow:hidden;border-radius:${T.radius}cqw;background-color:${T.bgColor};${shadow}">`;
-      if(T.bg) h+=`<div style="position:absolute;inset:0;background:url(${T.bg}) center/cover;opacity:${T.bgOp};${T.blur?`filter:blur(${T.blur}cqw);transform:scale(1.12);`:''}"></div>`;
+      if(T.bg) h+=`<div style="position:absolute;inset:0;background-image:url(${T.bg});background-size:${T.bgScale*100}%;background-position:${T.bgX}% ${T.bgY}%;background-repeat:no-repeat;opacity:${T.bgOp};${T.blur?`filter:blur(${T.blur}cqw);`:''}z-index:1"></div>`;
       if(T.gType!=='none') h+=`<div style="position:absolute;inset:0;opacity:${T.gOp};background:${T.gType==='linear'?`linear-gradient(${T.gAngle}deg,${T.g1},${T.g2})`:`radial-gradient(circle at 50% 40%,${T.g1},${T.g2})`}"></div>`;
       T.order.forEach((k,i)=>{
         const c=E[k]; if(!c||!c.show) return;
@@ -967,7 +987,7 @@ function app(){
 
     async generate(){ if(!this.can('tickets')) return;
       const n=Math.max(1,Math.min(5000,parseInt(this.gQty)||1)); this.busy=true;
-      const p={Ordinary:'ORD',VIP:'VIP',VVIP:'VVIP'}[this.gTier];
+      const p={Ordinary:'GEN',VIP:'VIP',VVIP:'TBL'}[this.gTier];
       let seq=this.tickets.filter(t=>t.tier===this.gTier).reduce((m,t)=>Math.max(m,parseInt(t.number.split('-')[1])||0),0);
       if(sb){
         try{ const r=await sb.rpc('reserve_seq',{p_token:this.user.token,p_tier:this.gTier,p_qty:n}); if(r.error) throw r.error; seq=r.data-1; }
@@ -1254,7 +1274,7 @@ function app(){
       if(f.payment==='Card'&&(!f.cardNumber||!f.expiry||!f.cvv)){ this.requestOk=false; this.requestMessage='Complete the card simulation fields to continue.'; return; }
       this.requestBusy=true;
       try{
-        const prefix={Ordinary:'ORD',VIP:'VIP',VVIP:'VVIP'}[this.requestTier];
+        const prefix={Ordinary:'GEN',VIP:'VIP',VVIP:'TBL'}[this.requestTier];
         const latest=await sb.from('tickets').select('number').eq('tier',this.requestTier).like('number',prefix+'-%').order('number',{ascending:false}).limit(1).maybeSingle();
         if(latest.error) throw latest.error;
         const last=latest.data?parseInt(String(latest.data.number).split('-').pop(),10)||0:0;
