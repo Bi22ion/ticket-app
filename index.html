@@ -783,8 +783,8 @@ const supabaseClient = window.supabase ? window.supabase.createClient(SUPABASE_U
 function app(){
   const DB='gatekeeper.tickets.v2', TP='gatekeeper.template.v2', PQ='gatekeeper.pending.v1', SF='gatekeeper.synced.v1', SK='gatekeeper.session.v1', AU='gatekeeper.appurl', DD='gatekeeper.designdirty', qc={}, sb=supabaseClient;
   let dt, quiet=false;
-  const SESS=(()=>{ try{ const x=JSON.parse(localStorage.getItem(SK)||'null'); return x&&x.username&&x.role&&x.token?x:null; }catch(e){ return null; } })();
-  const GUEST=location.hash.startsWith('#/t/')?(()=>{ const ticketId=decodeURIComponent(location.hash.slice(4)); const dot=ticketId.lastIndexOf('.'); return dot>0?{ticketId,number:ticketId.slice(0,dot),code:ticketId.slice(dot+1)}:null; })():null;
+  const SESS=(()=>{ try{ const x=JSON.parse(localStorage.getItem(SK)||'null'); if(!x||!x.username||!x.role||!x.token)return null; x.role=String(x.role).toLowerCase(); return ['admin','producer','gatekeeper'].includes(x.role)?x:null; }catch(e){ return null; } })();
+  const GUEST=location.hash.startsWith('#/t/')?(()=>{ const ticketId=decodeURIComponent(location.hash.slice(4)).trim(); const dot=ticketId.lastIndexOf('.'); const rawNumber=dot>0?ticketId.slice(0,dot):ticketId; const number=rawNumber.toUpperCase().replace(/^(GEN|VIP|TABLE)-?(\d+)$/,(m,t,n)=>`${t}-${n.padStart(4,'0')}`); return /^(GEN|VIP|TABLE)-\d{4}$/.test(number)?{ticketId,number,code:dot>0?ticketId.slice(dot+1):'',salt:dot>0?ticketId.slice(dot+1):''}:null; })():null;
   const REQUEST=location.hash==='#/request';
   const FONTS={'Montserrat':"Montserrat,system-ui,sans-serif",'Poppins':"Poppins,system-ui,sans-serif",'Inter':"Inter,system-ui,sans-serif",'Oswald':"Oswald,Impact,sans-serif",'Playfair Display':"'Playfair Display',Georgia,serif",'Cinzel':"Cinzel,Georgia,serif",'Space Grotesk':"'Space Grotesk',system-ui,sans-serif",'Monospace':"ui-monospace,Menlo,Consolas,monospace"};
   const T0=(label,x,y,size,color,weight,font,o)=>({label,x,y,size,color,weight,font,ls:0,align:'left',transform:'none',sh:1,shc:'#000000',show:true,...o});
@@ -1300,36 +1300,34 @@ function app(){
       try{
         this.gDevice=localStorage.getItem('gatekeeper.device.v1')||((crypto.randomUUID?crypto.randomUUID():this.rnd(24)));
         localStorage.setItem('gatekeeper.device.v1',this.gDevice);
-        const d=await sb.rpc('public_design');
+        const d=await Promise.race([sb.rpc('public_design'),new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout')),5000))]);
         if(d.error) throw d.error;
         if(d.data) this.tpl=this.mergeTpl(d.data);
         await this.refreshLiveTicket();
-        this.gRefreshTimer=setInterval(()=>this.refreshLiveTicket(),Math.max(10000,this.gTtl*400),);
+        this.gRefreshTimer=setInterval(()=>this.refreshLiveTicket(),30000);
         this.gOnline=navigator.onLine;
         window.addEventListener('online',()=>{this.gOnline=true;this.refreshLiveTicket();});
         window.addEventListener('offline',()=>{this.gOnline=false;});
         document.addEventListener('visibilitychange',()=>{if(!document.hidden)this.refreshLiveTicket();});
       }catch(e){
-        this.gErr=/does not exist|schema cache|function/i.test(e.message||'')?'Database setup incomplete. Ask the owner to run 01_database_setup.sql.':'Could not load this ticket. Check your connection.';
+        if(!this.gt) this.gErr='Ticket Not Found. Check the link and try again.';
       }
     },
     async refreshLiveTicket(){
       if(!sb||!this.guest||!navigator.onLine) return;
       try{
-        const r=await sb.rpc('ticket_live',{p_number:this.guest.number.toUpperCase(),p_code:this.guest.code,p_device:this.gDevice});
+        const r=await Promise.race([
+          sb.from('tickets').select('number, tier, code, salt, buyer, status, created_at, used_at, printed, shared').eq('number',this.guest.number).maybeSingle(),
+          new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout')),5000))
+        ]);
         if(r.error) throw r.error;
-        const x=r.data||{}; this.gState=String(x.state||'ERROR').toUpperCase();
-        if(this.gState==='NOT_FOUND'){this.gErr='This ticket link is not valid.';return;}
-        if(this.gState==='ERROR'){this.gErr=x.message||'Could not load the live ticket.';return;}
-        if(x.number)this.gt={...this.gt,...x,buyer:''};
-        if(x.payload)this.gPayload=x.payload;
-        this.gTtl=Math.max(10,Number(x.ttl||30)); this.gSeconds=this.gTtl; this.gTtlPercent=100;
+        if(!r.data){ this.gState='ERROR'; this.gErr='Ticket Not Found'; return; }
+        this.gt=this.fromRow(r.data); this.gState='OK'; this.gPayload=`TKT|${this.gt.number}|${this.gt.code}`;
+        this.gTtl=30; this.gSeconds=this.gTtl; this.gTtlPercent=100;
         clearInterval(this.gTimer); this.gTimer=setInterval(()=>{this.gSeconds=Math.max(0,this.gSeconds-1);this.gTtlPercent=this.gTtl?this.gSeconds/this.gTtl*100:0;},1000);
-        if(navigator.wakeLock?.request) try{this.gWake=await navigator.wakeLock.request('screen');}catch(e){}
       }catch(e){
         this.gOnline=navigator.onLine;
-        if(/does not exist|schema cache|function/i.test(e.message||'')) this.gErr='Database setup incomplete. Ask the owner to run 01_database_setup.sql.';
-        else if(!this.gt) this.gErr='Could not load the live ticket. Check your connection.';
+        if(!this.gt) this.gErr='Ticket Not Found';
       }
     },
 
