@@ -1078,7 +1078,7 @@ function app(){
     /* ---------- roles & cloud sync (Supabase) ---------- */
     get tabs(){
       const L={design:'Design',tickets:'Tickets',gate:'Gate',backup:'Backup'};
-      return ({admin:['design','tickets','gate','backup'],producer:['design','tickets'],gatekeeper:['gate']}[this.role]||[]).map(k=>[k,L[k]]);
+      return ({admin:['design','tickets','gate','backup'],producer:['tickets'],gatekeeper:['gate']}[this.role]||[]).map(k=>[k,L[k]]);
     },
     can(k){ return this.tabs.some(x=>x[0]===k); },
     get roleLabel(){ return ({admin:'Super Admin',producer:'Producer',gatekeeper:'Gatekeeper'}[this.role]||''); },
