@@ -114,7 +114,7 @@
 <main x-show="user&&!guest" x-cloak class="max-w-6xl mx-auto px-4 py-6 ui">
 
 <!-- DESIGN -->
-<section x-show="tab==='design'" x-cloak class="dz rounded-2xl bg-[#0f1115] p-3 lg:p-4 grid lg:grid-cols-[1fr_370px] gap-4 text-stone-200">
+<section x-show="can('design')&&tab==='design'" x-cloak class="dz rounded-2xl bg-[#0f1115] p-3 lg:p-4 grid lg:grid-cols-[1fr_370px] gap-4 text-stone-200">
   <div class="min-w-0">
     <div class="flex flex-wrap items-center gap-2 mb-3">
       <div class="flex rounded-lg bg-white/5 p-1 mr-auto">
@@ -122,7 +122,7 @@
           <button :data-tip="tip" @click="view=v" class="px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-300" :class="view===v?'bg-sky-500 text-white shadow':'text-stone-400 hover:text-white'" x-text="l"></button>
         </template>
       </div>
-      <select x-model="pTier" class="dinp !w-auto" aria-label="Preview tier"><option>Ordinary</option><option>VIP</option><option>Table</option></select>
+      <select x-model="pTier" class="dinp !w-auto" aria-label="Preview tier"><option value="GEN">GEN</option><option value="VIP">VIP</option><option value="TABLE">TABLE</option></select>
       <input x-model="pName" class="dinp !w-40" placeholder="Internal note (not printed)" aria-label="Internal note">
     </div>
     <div class="rounded-xl p-4 sm:p-8 min-h-[320px] flex items-center justify-center" style="background-color:#12151b;background-image:radial-gradient(#2a2f3a 1px,transparent 1px);background-size:18px 18px">
@@ -282,7 +282,7 @@
 </section>
 
  <!-- TICKETS -->
-<section x-show="tab==='tickets'" x-cloak class="space-y-6">
+<section x-show="can('tickets')&&tab==='tickets'" x-cloak class="space-y-6">
   <!-- Top Stat Cards Bar -->
   <div class="grid grid-cols-3 md:grid-cols-6 gap-3 text-center">
     <template x-for="s in statCards" :key="s.l">
@@ -305,9 +305,9 @@
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
       <label class="lbl font-medium text-stone-700">Ticket Tier 
         <select x-model="gTier" class="inp mt-1.5 focus:ring-2 focus:ring-sky-500">
-<option value="Ordinary">GEN</option>
+<option value="GEN">GEN</option>
   <option value="VIP">VIP</option>
-  <option value="VVIP">TABLE</option>
+  <option value="TABLE">TABLE</option>
         </select>
       </label>
       <label class="lbl font-medium text-stone-700">Quantity (Batch Count) 
@@ -357,9 +357,9 @@
       </div>
       <select x-model="fTier" class="inp !w-36 bg-white" aria-label="Filter by tier">
 <option value="">All Tiers</option>
-  <option value="Ordinary">GEN</option>
+<option value="GEN">GEN</option>
   <option value="VIP">VIP</option>
-  <option value="VVIP">TABLE</option>
+  <option value="TABLE">TABLE</option>
       </select>
       <select x-model="fStatus" class="inp !w-36 bg-white" aria-label="Filter by status">
         <option value="">All Statuses</option>
@@ -471,7 +471,7 @@
 -- tickets (safe to re-run)
 create table if not exists public.tickets (
   number text primary key,
-  tier text not null check (tier in ('Ordinary','VIP','VVIP')),
+  tier text not null check (tier in ('GEN','VIP','TABLE')),
   code text not null, salt text not null,
   buyer text not null default '',
   status text not null default 'Unused' check (status in ('Unused','Used')),
@@ -556,7 +556,7 @@ create or replace function public.reserve_seq(p_token text, p_tier text, p_qty i
 declare cur int;
 begin
   if not _staff(p_token) then raise exception 'Not allowed'; end if;
-  if p_tier not in ('Ordinary','VIP','VVIP') or p_qty < 1 or p_qty > 5000 then raise exception 'Bad request'; end if;
+  if p_tier not in ('GEN','VIP','TABLE') or p_qty < 1 or p_qty > 5000 then raise exception 'Bad request'; end if;
   perform pg_advisory_xact_lock(hashtext('seq_' || p_tier));
   select coalesce(max(regexp_replace(number, '^.*-', '')::int), 0) into cur from tickets where tier = p_tier;
   cur := greatest(cur, coalesce((select last from ticket_counters where tier = p_tier), 0));
@@ -796,7 +796,7 @@ function app(){
       date:T0('Date',5,52,3.4,'#ffffff',700,'Montserrat'),
       venue:T0('Venue',5,61,3,'#f1e0b4',500,'Montserrat'),
       tier:T0('Ticket type',5,73,6,'#e9b949',900,'Cinzel',{transform:'uppercase'}),
-      seat:T0('Table & seat',38,76,3.4,'#ffffff',700,'Montserrat',{transform:'uppercase'}),
+      seat:T0('TABLE & SEAT',38,76,3.4,'#ffffff',700,'Montserrat',{transform:'uppercase'}),
       name:T0('Internal note (never printed)',5,62,5,'#ffffff',500,'Inter',{show:false}),
       serial:T0('Serial number',70,67,2.6,'#ffffff',500,'Monospace'),
       check:T0('Check code',70,73,2.2,'#e9b949',700,'Monospace'),
@@ -827,14 +827,14 @@ function app(){
         serial:{color:'#5b2a14',font:'Monospace',weight:700,align:'center',x:36,y:80,size:4.5,sh:0},qr:{x:66,y:16,size:28}}}
   };
   return {
-    tab:SESS?(SESS.role==='gatekeeper'?'gate':SESS.role==='producer'?'tickets':'design'):'design', user:SESS, guest:GUEST, request:REQUEST, gt:null, gErr:'', requestTiers:[{name:'Ordinary',price:50000},{name:'VIP',price:100000},{name:'VVIP',price:3000000}], requestTier:'Ordinary', requestForm:{name:'',phone:'',email:'',payment:'Mobile Money',paymentPhone:'',cardNumber:'',expiry:'',cvv:''}, requestBusy:false, requestMessage:'', requestOk:false, requestTicket:null, lu:'', lp:'', showPw:false, loginErr:'', loginBusy:false, staff:[], nu:'', np:'', nr:'gatekeeper', staffMsg:'', staffOk:true, appUrl:localStorage.getItem(AU)||'', cloud:'offline', cloudErr:'', pending:[], syncing:false, flushing:false, tickets:[], tpl:defaultTpl(), pTier:'VIP', pName:'Amina Nakato', dTab:'canvas', selKey:'title', view:'edit', guides:null, tilt:{rx:0,ry:0,gx:50,gy:50}, presets:PRESETS, fonts:FONTS,
-    gTier:'Ordinary', gQty:10, gName:'', busy:false, q:'', fTier:'', fStatus:'', sel:{},
+    tab:SESS?(SESS.role==='gatekeeper'?'gate':SESS.role==='producer'?'tickets':'design'):'design', user:SESS, guest:GUEST, request:REQUEST, gt:null, gErr:'', requestTiers:[{name:'GEN',price:50000},{name:'VIP',price:100000},{name:'TABLE',price:3000000}], requestTier:'GEN', requestForm:{name:'',phone:'',email:'',payment:'Mobile Money',paymentPhone:'',cardNumber:'',expiry:'',cvv:''}, requestBusy:false, requestMessage:'', requestOk:false, requestTicket:null, lu:'', lp:'', showPw:false, loginErr:'', loginBusy:false, staff:[], nu:'', np:'', nr:'gatekeeper', staffMsg:'', staffOk:true, appUrl:localStorage.getItem(AU)||'', cloud:'offline', cloudErr:'', pending:[], syncing:false, flushing:false, tickets:[], tpl:defaultTpl(), pTier:'VIP', pName:'Amina Nakato', dTab:'canvas', selKey:'title', view:'edit', guides:null, tilt:{rx:0,ry:0,gx:50,gy:50}, presets:PRESETS, fonts:FONTS,
+    gTier:'GEN', gQty:10, gName:'', busy:false, q:'', fTier:'', fStatus:'', sel:{},
   gState:'', gPayload:'', gSeconds:0, gTtlPercent:0, gOnline:true, gDevice:'', gTtl:30, gTimer:null, gRefreshTimer:null,
     perSheet:6, paper:'A4', printHTML:'', drag:null,
     scanner:null, camError:'', result:null, locked:false, man:'',
     impMode:'merge', impDesign:true, msg:'', msgOk:true,
-    access:{Ordinary:'General admission',VIP:'VIP area access',Table:'Table seating'},
-    tierLabel(t){ return {Ordinary:'GEN',VIP:'VIP',VVIP:'TABLE'}[t]||t; },
+    access:{GEN:'General admission',VIP:'VIP area access',TABLE:'TABLE seating'},
+    tierLabel(t){ return {GEN:'GEN',VIP:'VIP',TABLE:'TABLE'}[t]||t; },
 
     init(){
       try{ this.tickets=JSON.parse(localStorage.getItem(DB)||'[]'); }catch(e){}
@@ -859,9 +859,9 @@ function app(){
     save(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){ alert('Browser storage is full. Export a backup and use a smaller background image.'); } },
     fmt(ts){ return new Date(ts).toLocaleString(); },
     esc(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); },
-    tierClass(t){ return {Ordinary:'bg-stone-200 text-stone-800',VIP:'bg-amber-100 text-amber-900',VVIP:'bg-blue-100 text-blue-900'}[t]||'bg-stone-200 text-stone-800'; },
+    tierClass(t){ return {GEN:'bg-stone-200 text-stone-800',VIP:'bg-amber-100 text-amber-900',TABLE:'bg-blue-100 text-blue-900'}[t]||'bg-stone-200 text-stone-800'; },
 
-    get sample(){ return {number:{Ordinary:'GEN',VIP:'VIP',VVIP:'TBL'}[this.pTier]+'-0001',tier:this.pTier,buyer:this.pName,code:'SAMPLE000000'}; },
+    get sample(){ return {number:{GEN:'GEN',VIP:'VIP',TABLE:'TABLE'}[this.pTier]+'-0001',tier:this.pTier,buyer:this.pName,code:'SAMPLE000000'}; },
     get selCount(){ return this.tickets.filter(t=>this.sel[t.number]).length; },
     get filtered(){
       const q=this.q.trim().toLowerCase();
@@ -873,7 +873,7 @@ function app(){
       const T=this.tickets, U=T.filter(t=>t.status==='Used');
       const by=k=>`${U.filter(t=>t.tier===k).length}/${T.filter(t=>t.tier===k).length}`;
       return [{l:'Generated',v:T.length},{l:'Scanned',v:U.length},{l:'Unused',v:T.length-U.length},
-        {l:'Ordinary in/total',v:by('Ordinary')},{l:'VIP in/total',v:by('VIP')},{l:'VVIP in/total',v:by('VVIP')}];
+        {l:'GEN IN/TOTAL',v:by('GEN')},{l:'VIP IN/TOTAL',v:by('VIP')},{l:'TABLE IN/TOTAL',v:by('TABLE')}];
     },
 
     /* ---------- design studio ---------- */
@@ -891,7 +891,7 @@ function app(){
     },
     ticketHTML(t,edit,fx){
       const T=this.tpl, E=T.el, sel=edit?this.selKey:null;
-      const txt={organizer:T.eventOrganizer,title:T.eventTitle,subtitle:T.eventSub,date:T.eventDate,venue:T.eventVenue,tier:this.tierLabel(t.tier),seat:t.tier==='Table'&&t.tableId?`TABLE ${t.tableId} · SEAT ${t.seatNo||''}`:'',name:'',serial:t.number,check:t.code?`CHECK ${String(t.code).slice(0,6).toUpperCase()}`:'',contact:T.eventContact,terms:T.eventTerms};
+      const txt={organizer:T.eventOrganizer,title:T.eventTitle,subtitle:T.eventSub,date:T.eventDate,venue:T.eventVenue,tier:this.tierLabel(t.tier),seat:t.tier==='TABLE'&&t.tableId?`TABLE ${t.tableId} · SEAT ${t.seatNo||''}`:'',name:'',serial:t.number,check:t.code?`CHECK ${String(t.code).slice(0,6).toUpperCase()}`:'',contact:T.eventContact,terms:T.eventTerms};
       const shadow=fx&&T.shadow>0?`box-shadow:0 ${T.shadow*.25}px ${T.shadow*.7}px rgba(0,0,0,.45);`:'';
       let h=`<div style="container-type:inline-size;width:100%"><div style="position:relative;aspect-ratio:${this.ratio};overflow:hidden;border-radius:${T.radius}cqw;background-color:${T.bgColor};${shadow}">`;
       if(T.bg) h+=`<div style="position:absolute;inset:0;background-image:url(${T.bg});background-size:${T.bgScale*100}%;background-position:${T.bgX}% ${T.bgY}%;background-repeat:no-repeat;opacity:${T.bgOp};${T.blur?`filter:blur(${T.blur}cqw);`:''}z-index:1"></div>`;
@@ -995,7 +995,7 @@ function app(){
 
     async generate(){ if(!this.can('tickets')) return;
       const n=Math.max(1,Math.min(5000,parseInt(this.gQty)||1)); this.busy=true;
-      const p={Ordinary:'GEN',VIP:'VIP',VVIP:'TBL'}[this.gTier];
+      const p={GEN:'GEN',VIP:'VIP',TABLE:'TABLE'}[this.gTier];
       let seq=this.tickets.filter(t=>t.tier===this.gTier).reduce((m,t)=>Math.max(m,parseInt(t.number.split('-')[1])||0),0);
       if(sb){
         try{ const r=await sb.rpc('reserve_seq',{p_token:this.user.token,p_tier:this.gTier,p_qty:n}); if(r.error) throw r.error; seq=r.data-1; }
@@ -1040,7 +1040,7 @@ function app(){
       this.locked=true; let t=null, scannedCode='';
       const raw=String(text).trim();
       if(manual){
-        const m=raw.toUpperCase().match(/^(ORD|VIP|VVIP)-?(\d+)$/);
+        const m=raw.toUpperCase().match(/^(GEN|VIP|TABLE)-?(\d+)$/);
         if(m) scannedCode='';
         const number=m?`${m[1]}-${m[2].padStart(4,'0')}`:'';
         if(number&&sb&&navigator.onLine){
@@ -1282,7 +1282,7 @@ function app(){
       if(f.payment==='Card'&&(!f.cardNumber||!f.expiry||!f.cvv)){ this.requestOk=false; this.requestMessage='Complete the card simulation fields to continue.'; return; }
       this.requestBusy=true;
       try{
-        const prefix={Ordinary:'GEN',VIP:'VIP',VVIP:'TBL'}[this.requestTier];
+        const prefix={GEN:'GEN',VIP:'VIP',TABLE:'TABLE'}[this.requestTier];
         const latest=await sb.from('tickets').select('number').eq('tier',this.requestTier).like('number',prefix+'-%').order('number',{ascending:false}).limit(1).maybeSingle();
         if(latest.error) throw latest.error;
         const last=latest.data?parseInt(String(latest.data.number).split('-').pop(),10)||0:0;
@@ -1375,7 +1375,7 @@ function app(){
       const f=e.target.files[0]; if(!f) return;
       try{
         const d=JSON.parse(await f.text());
-        const ok=t=>t&&typeof t.number==='string'&&['Ordinary','VIP','VVIP'].includes(t.tier)&&t.code&&t.salt;
+        const ok=t=>t&&typeof t.number==='string'&&['GEN','VIP','TABLE'].includes(t.tier)&&t.code&&t.salt;
         if(!Array.isArray(d.tickets)||!d.tickets.every(ok)) throw new Error('bad');
         const inc=d.tickets.map(t=>({buyer:'',status:'Unused',createdAt:Date.now(),usedAt:null,printed:false,...t}));
         if(this.impMode==='replace') this.tickets=inc;
