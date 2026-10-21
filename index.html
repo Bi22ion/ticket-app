@@ -367,9 +367,10 @@
         <option value="Used">Used</option>
         <option value="Unprinted">Unprinted</option>
       </select>
-      <div class="flex gap-2 ml-auto">
+      <div class="flex gap-2 ml-auto flex-wrap justify-end">
+        <button class="btn bg-sky-600 hover:bg-sky-700 text-white text-xs font-medium px-3 py-2" @click="shareSelected()" :disabled="!shareCount" x-text="shareCount?`Share Selected (${shareCount}/8)`:'Share Selected'"></button>
         <button class="btn bg-white hover:bg-stone-100 text-stone-700 text-xs font-medium px-3 py-2" @click="filtered.forEach(t=>sel[t.number]=true)">Select Shown</button>
-        <button class="btn bg-white hover:bg-stone-100 text-stone-700 text-xs font-medium px-3 py-2" @click="filtered.filter(t=>!t.printed).forEach(t=>sel[t.number]=true)">Select Unprinted</button>
+        <button class="btn bg-white hover:bg-stone-100 text-stone-700 text-xs font-medium px-3 py-2" @click="filtered.filter(t=>!t.printed&&!t.shared).forEach(t=>sel[t.number]=true)">Select Unprinted</button>
         <button class="btn bg-white hover:bg-rose-50 text-rose-600 text-xs font-medium px-3 py-2 border-stone-200" @click="sel={}">Clear Selection</button>
       </div>
     </div>
@@ -415,7 +416,7 @@
                 <div x-show="t.shared" class="text-sky-600 text-[11px] font-medium">Shared</div>
               </td>
               <td class="p-3 text-right whitespace-nowrap space-x-2">
-                <button class="btn bg-white hover:bg-stone-100 text-xs font-medium px-2.5 py-1 border border-stone-300 shadow-2xs" @click="printTickets([t])">Print Single</button>
+                <button class="btn bg-white hover:bg-stone-100 text-xs font-medium px-2.5 py-1 border border-stone-300 shadow-2xs" @click="printTickets([t])" :disabled="t.shared">Print Single</button>
                 <button class="btn bg-white hover:bg-sky-50 text-xs font-medium px-2.5 py-1 border border-sky-300 text-sky-700 shadow-2xs" title="Send by WhatsApp or SMS" @click="shareTicket(t)">Share</button>
                 <button class="btn bg-white hover:bg-stone-100 text-xs font-medium px-2.5 py-1 border border-stone-300 shadow-2xs" @click="copyLink(t)">Copy link</button>
                 <button x-show="can('backup')" class="text-stone-400 hover:text-rose-600 p-1 transition-colors" @click="remove(t)" aria-label="Delete ticket">✕</button>
@@ -479,6 +480,8 @@ create table if not exists public.tickets (
   printed boolean not null default false
 );
 alter table public.tickets add column if not exists shared boolean not null default false;
+alter table public.tickets add column if not exists active_token text;
+alter table public.tickets add column if not exists token_updated_at timestamptz;
 create index if not exists tickets_created_idx on public.tickets (created_at, number);
 alter table public.tickets enable row level security;
 drop policy if exists "anon full access" on public.tickets;
@@ -762,8 +765,6 @@ end $$;</pre>
   <img :src="gPayload?qrUrl(gPayload):''" alt="Live ticket QR code" class="w-full" :class="gOnline?'':'opacity-0'">
   <div x-show="!gOnline" class="absolute inset-0 flex items-center justify-center rounded-lg bg-stone-100 px-4 text-sm font-semibold text-stone-700">QR hidden while offline</div>
   </div>
-  <div class="mt-3 h-1.5 overflow-hidden rounded-full bg-stone-200"><div class="h-full bg-emerald-500 transition-all" :style="`width:${gTtlPercent}%`"></div></div>
-  <div class="mt-2 text-xs text-stone-500" x-text="gSeconds+'s remaining · live refresh enabled'"></div>
   <div class="text-3xl font-black mt-3" x-text="tierLabel(gt.tier)"></div>
   <div class="font-mono text-lg" x-text="gt.number"></div>
   <div class="text-sm text-stone-500 mt-1" x-text="access[gt.tier]"></div>
@@ -829,7 +830,7 @@ function app(){
   return {
     tab:SESS?(SESS.role==='gatekeeper'?'gate':SESS.role==='producer'?'tickets':'design'):'design', user:SESS, guest:GUEST, request:REQUEST, gt:null, gErr:'', requestTiers:[{name:'GEN',price:50000},{name:'VIP',price:100000},{name:'TABLE',price:3000000}], requestTier:'GEN', requestForm:{name:'',phone:'',email:'',payment:'Mobile Money',paymentPhone:'',cardNumber:'',expiry:'',cvv:''}, requestBusy:false, requestMessage:'', requestOk:false, requestTicket:null, lu:'', lp:'', showPw:false, loginErr:'', loginBusy:false, staff:[], nu:'', np:'', nr:'gatekeeper', staffMsg:'', staffOk:true, appUrl:localStorage.getItem(AU)||'', cloud:'offline', cloudErr:'', pending:[], syncing:false, flushing:false, tickets:[], tpl:defaultTpl(), pTier:'VIP', pName:'Amina Nakato', dTab:'canvas', selKey:'title', view:'edit', guides:null, tilt:{rx:0,ry:0,gx:50,gy:50}, presets:PRESETS, fonts:FONTS,
     gTier:'GEN', gQty:10, gName:'', busy:false, q:'', fTier:'', fStatus:'', sel:{},
-  gState:'', gPayload:'', gSeconds:0, gTtlPercent:0, gOnline:true, gDevice:'', gTtl:30, gTimer:null, gRefreshTimer:null,
+  gState:'', gPayload:'', gSeconds:0, gTtlPercent:0, gOnline:true, gDevice:'', gTtl:30, gTimer:null, gRefreshTimer:null, gTokenTimer:null,
     perSheet:6, paper:'A4', printHTML:'', drag:null,
     scanner:null, camError:'', result:null, locked:false, man:'',
     impMode:'merge', impDesign:true, msg:'', msgOk:true,
@@ -866,7 +867,7 @@ function app(){
     get filtered(){
       const q=this.q.trim().toLowerCase();
       return this.tickets.filter(t=>(!this.fTier||t.tier===this.fTier)
-        &&(!this.fStatus||(this.fStatus==='Unprinted'?!t.printed:t.status===this.fStatus))
+        &&(!this.fStatus||(this.fStatus==='Unprinted'?(!t.printed&&!t.shared):t.status===this.fStatus))
         &&(!q||(t.number+' '+t.buyer+' '+t.code).toLowerCase().includes(q)));
     },
     get statCards(){
@@ -1004,7 +1005,7 @@ function app(){
       const fresh=[];
       for(let i=0;i<n;i++){
         const number=`${p}-${String(++seq).padStart(4,'0')}`, salt=this.rnd(12);
-        fresh.push({number,tier:this.gTier,salt,code:await this.makeCode(number,salt),buyer:n===1?this.gName.trim():'',status:'Unused',createdAt:Date.now(),usedAt:null,printed:false,shared:false});
+        fresh.push({number,tier:this.gTier,salt,code:await this.makeCode(number,salt),buyer:n===1?this.gName.trim():'',status:'Unused',createdAt:Date.now(),usedAt:null,printed:false,shared:false,activeToken:'',tokenUpdatedAt:null});
       }
       this.tickets=[...this.tickets,...fresh]; this.queue({op:'insert',rows:fresh}); this.gName=''; this.busy=false;
     },
@@ -1013,6 +1014,7 @@ function app(){
     resetScans(){ if(!this.can('backup')) return; if(confirm('Mark every ticket as Unused again, on all devices?')){ this.tickets.forEach(t=>{t.status='Unused';t.usedAt=null;}); this.queue({op:'reset'}); } },
 
     printTickets(list){
+      list=list.filter(t=>!t.shared);
       if(!list.length||!this.can('tickets')) return;
       const n=this.perSheet, r=this.ratio, cols=n===4?(r>=1.5?1:2):2, rows=Math.ceil(n/cols), mh=((this.paper==='A4'?255:240)-(rows-1)*4)/rows, mw=(190-(cols-1)*4)/cols, L=[cols,Math.floor(Math.min(mw,mh*r))];
       let h='';
@@ -1044,19 +1046,19 @@ function app(){
         if(m) scannedCode='';
         const number=m?`${m[1]}-${m[2].padStart(4,'0')}`:'';
         if(number&&sb&&navigator.onLine){
-          const r=await sb.from('tickets').select('number, tier, code, buyer, status, created_at, used_at, printed, shared').eq('number',number).maybeSingle();
+          const r=await sb.from('tickets').select('number, tier, code, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at').eq('number',number).maybeSingle();
           if(!r.error&&r.data) t=this.fromRow(r.data);
         }else if(number) t=this.tickets.find(x=>x.number===number);
       }else{
         const [tag,num,code]=raw.split('|');
         if(tag==='TKT'){ scannedCode=String(code||'').toUpperCase();
           if(sb&&navigator.onLine){
-            const r=await sb.from('tickets').select('number, tier, code, buyer, status, created_at, used_at, printed, shared').eq('number',num).maybeSingle();
+            const r=await sb.from('tickets').select('number, tier, code, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at').eq('number',num).maybeSingle();
             if(!r.error&&r.data) t=this.fromRow(r.data);
           }else t=this.tickets.find(x=>x.number===num);
         }
       }
-      if(t&&scannedCode&&String(t.code).toUpperCase()!==scannedCode) t=null;
+      if(t&&scannedCode&&String(t.shared?t.activeToken||t.code:t.code).toUpperCase()!==scannedCode) t=null;
       if(!t) this.result={ok:false,title:'INVALID OR FAKE TICKET',detail:'ACCESS DENIED — NOT FOUND IN DATABASE'};
       else if(t.status==='Used') this.result={ok:false,title:'TICKET ALREADY USED',detail:'ALREADY SCANNED AT '+this.fmt(t.usedAt),t};
       else{ const ok=await this.claim(t); this.result=ok?{ok:true,title:'VALID TICKET',detail:t.printed?'ENTRY ALLOWED · ALREADY PRINTED — DO NOT PRINT A DUPLICATE':'ENTRY ALLOWED',t:{...t}}:{ok:false,title:'TICKET ALREADY USED',detail:'ALREADY SCANNED AT '+this.fmt(t.usedAt),t}; }
@@ -1083,8 +1085,9 @@ function app(){
     can(k){ return this.tabs.some(x=>x[0]===k); },
     get roleLabel(){ return ({admin:'Super Admin',producer:'Producer',gatekeeper:'Gatekeeper'}[this.role]||''); },
     get cloudLabel(){ const n=this.pending.length; return this.cloud==='live'?'Live sync':this.cloud==='sync'?'Syncing…':'Offline'+(n?` · ${n} queued`:''); },
-    toRow(t){ return {number:t.number,tier:t.tier,code:t.code,salt:t.salt,buyer:t.buyer||'',status:t.status,created_at:t.createdAt,used_at:t.usedAt??null,printed:!!t.printed,shared:!!t.shared}; },
-    fromRow(r){ return {number:r.number,tier:r.tier,code:r.code,salt:r.salt,buyer:r.buyer||'',status:r.status,createdAt:Number(r.created_at),usedAt:r.used_at==null?null:Number(r.used_at),printed:!!r.printed,shared:!!r.shared}; },
+    toRow(t){ return {number:t.number,tier:t.tier,code:t.code,salt:t.salt,buyer:t.buyer||'',status:t.status,created_at:t.createdAt,used_at:t.usedAt??null,printed:!!t.printed,shared:!!t.shared,active_token:t.activeToken||null,token_updated_at:t.tokenUpdatedAt||null}; },
+    fromRow(r){ return {number:r.number,tier:r.tier,code:r.code,salt:r.salt,buyer:r.buyer||'',status:r.status,createdAt:Number(r.created_at),usedAt:r.used_at==null?null:Number(r.used_at),printed:!!r.printed,shared:!!r.shared,activeToken:r.active_token||'',tokenUpdatedAt:r.token_updated_at||null}; },
+    get shareCount(){ return this.tickets.filter(t=>this.sel[t.number]&&!t.shared&&t.status==='Unused').length; },
     errMsg(e){ return e.code==='PGRST205'||/does not exist|schema cache/i.test(e.message||'')?'Cloud table not found. Run the setup SQL in your Supabase project.':(e.message||'Sync failed'); },
 
     queue(o){ this.pending.push(o); this.save(PQ,this.pending); this.flush(); },
@@ -1113,7 +1116,7 @@ function app(){
       else if(o.op==='reset') ck(await t.update({status:'Unused',used_at:null}).neq('status','Unused'));
       else if(o.op==='purge') ck(await sb.rpc('purge_tickets',{p_token:this.user.token}));
       else if(o.op==='insert') for(const c of ch(o.rows,500)) ck(await t.insert(c.map(r=>this.toRow(r))));
-      else if(o.op==='shared') for(const c of ch(o.numbers,100)) ck(await t.update({shared:true}).in('number',c));
+      else if(o.op==='shared') for(const c of ch(o.tokens||[],100)) for(const row of c) ck(await t.update({shared:true,active_token:row.activeToken,token_updated_at:row.tokenUpdatedAt,printed:false}).eq('number',row.number).eq('status','Unused'));
     },
     patchTicket(t){ this.queue({op:'patch',number:t.number,buyer:t.buyer||''}); },
     applyRemote(r){ const n=this.fromRow(r), l=this.tickets.find(x=>x.number===n.number); if(l) Object.assign(l,n); else this.tickets.push(n); },
@@ -1257,6 +1260,7 @@ function app(){
       return b.split('#')[0].split('?')[0]+`#/t/${t.number}.${t.code}`;
     },
     async shareTicket(t){
+      if(t.shared||t.status!=='Unused') return;
       const u=this.link(t); if(!u) return;
       const text=`Your ${t.tier} ticket${t.buyer?' for '+t.buyer:''} (${t.number}). Show this QR code at the gate: `;
       try{
@@ -1265,12 +1269,26 @@ function app(){
         this.markShared(t);
       }catch(e){}
     },
+    async shareSelected(){
+      const chosen=this.tickets.filter(t=>this.sel[t.number]&&!t.shared&&t.status==='Unused');
+      if(!chosen.length) return;
+      if(chosen.length>8){ alert('You can share a maximum of 8 tickets at once.'); return; }
+      chosen.forEach(t=>this.markShared(t));
+      const links=chosen.map(t=>`${t.number}: ${this.link(t)}`).join('\\n');
+      try{ if(navigator.share) await navigator.share({title:`${chosen.length} digital tickets`,text:'Digital tickets\\n'+links}); else await navigator.clipboard.writeText(links); }
+      catch(e){ try{ await navigator.clipboard.writeText(links); }catch(_){} }
+      chosen.forEach(t=>delete this.sel[t.number]);
+    },
     async copyLink(t){
       const u=this.link(t); if(!u) return;
       try{ await navigator.clipboard.writeText(u); }catch(e){ prompt('Copy this ticket link:',u); }
       this.markShared(t);
     },
-    markShared(t){ if(!t.shared){ t.shared=true; this.queue({op:'shared',numbers:[t.number]}); } },
+    markShared(t){
+      if(t.shared||t.status!=='Unused') return;
+      t.shared=true; t.activeToken=this.rnd(24); t.tokenUpdatedAt=new Date().toISOString();
+      this.queue({op:'shared',numbers:[t.number],tokens:[{number:t.number,activeToken:t.activeToken,tokenUpdatedAt:t.tokenUpdatedAt}]});
+    },
     get requestPrice(){ return this.requestTiers.find(x=>x.name===this.requestTier)?.price||0; },
     formatUgx(value){ return new Intl.NumberFormat('en-UG',{style:'currency',currency:'UGX',maximumFractionDigits:0}).format(value||0); },
     ticketHref(t){ return '#/t/'+encodeURIComponent(t.number+'.'+t.code); },
@@ -1289,7 +1307,7 @@ function app(){
         const number=prefix+'-'+String(last+1).padStart(4,'0'), salt=this.rnd(12), code=await this.makeCode(number,salt);
         const buyer=`${f.name} | ${f.phone} | ${f.email} | ${f.payment}`;
         const row={number,tier:this.requestTier,salt,code,buyer,status:'Unused',created_at:Date.now(),used_at:null,printed:false,shared:false};
-        const created=await sb.from('tickets').insert(row).select('number, tier, code, buyer, status, created_at, used_at, printed, shared').single();
+        const created=await sb.from('tickets').insert(row).select('number, tier, code, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at').single();
         if(created.error) throw created.error;
         this.requestTicket=created.data; this.requestOk=true; this.requestMessage=`Payment received: ${this.formatUgx(this.requestPrice)}. Ticket ${number} was created.`;
       }catch(e){ this.requestOk=false; this.requestMessage='The ticket could not be created. Please try again.'; }
@@ -1305,6 +1323,7 @@ function app(){
         if(d.data) this.tpl=this.mergeTpl(d.data);
         await this.refreshLiveTicket();
         this.gRefreshTimer=setInterval(()=>this.refreshLiveTicket(),30000);
+        this.gTokenTimer=setInterval(()=>this.rotateGuestToken(),25000);
         this.gOnline=navigator.onLine;
         window.addEventListener('online',()=>{this.gOnline=true;this.refreshLiveTicket();});
         window.addEventListener('offline',()=>{this.gOnline=false;});
@@ -1317,18 +1336,29 @@ function app(){
       if(!sb||!this.guest||!navigator.onLine) return;
       try{
         const r=await Promise.race([
-          sb.from('tickets').select('number, tier, code, salt, buyer, status, created_at, used_at, printed, shared').eq('number',this.guest.number).maybeSingle(),
+          sb.from('tickets').select('number, tier, code, salt, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at').eq('number',this.guest.number).maybeSingle(),
           new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout')),5000))
         ]);
         if(r.error) throw r.error;
         if(!r.data){ this.gState='ERROR'; this.gErr='Ticket Not Found'; return; }
-        this.gt=this.fromRow(r.data); this.gState='OK'; this.gPayload=`TKT|${this.gt.number}|${this.gt.code}`;
+        this.gt=this.fromRow(r.data); this.gState='OK'; this.gPayload=`TKT|${this.gt.number}|${this.gt.activeToken||this.gt.code}`;
         this.gTtl=30; this.gSeconds=this.gTtl; this.gTtlPercent=100;
         clearInterval(this.gTimer); this.gTimer=setInterval(()=>{this.gSeconds=Math.max(0,this.gSeconds-1);this.gTtlPercent=this.gTtl?this.gSeconds/this.gTtl*100:0;},1000);
+        if(this.gt.shared&&!this.gt.usedAt) this.rotateGuestToken();
       }catch(e){
         this.gOnline=navigator.onLine;
         if(!this.gt) this.gErr='Ticket Not Found';
       }
+    },
+
+    async rotateGuestToken(){
+      if(!sb||!this.gt||!this.gt.shared||this.gt.status==='Used'||!navigator.onLine) return;
+      const activeToken=this.rnd(24), tokenUpdatedAt=new Date().toISOString();
+      try{
+        const r=await sb.from('tickets').update({active_token:activeToken,token_updated_at:tokenUpdatedAt}).eq('number',this.gt.number).eq('shared',true).eq('status','Unused').select('number, tier, code, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at').maybeSingle();
+        if(r.error||!r.data) return;
+        this.gt=this.fromRow(r.data); this.gPayload=`TKT|${this.gt.number}|${this.gt.activeToken}`;
+      }catch(e){}
     },
 
     designChanged(){
