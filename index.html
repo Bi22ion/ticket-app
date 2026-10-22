@@ -704,7 +704,7 @@ end $$;</pre>
       <span class="text-xs px-2.5 py-1 bg-rose-50 text-rose-700 rounded-full font-semibold">Restricted Area</span>
     </div>
     <div class="flex flex-wrap gap-3 pt-1">
-      <button class="btn bg-white border border-rose-300 hover:bg-rose-50 text-rose-700 text-xs font-semibold py-2 px-4 shadow-2xs transition-colors" @click="resetScans()">🔄 Reset All Scans to Unused</button>
+      <button class="btn bg-white border border-rose-300 hover:bg-rose-50 text-rose-700 text-xs font-semibold py-2 px-4 shadow-2xs transition-colors" @click="resetScans()">�� Reset All Scans to Unused</button>
       <button class="btn bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold py-2 px-4 shadow-2xs transition-colors" @click="clearAll()">⚠️ Purge Entire Ticket Registry</button>
     </div>
   </div>
@@ -717,7 +717,9 @@ end $$;</pre>
     <div>
       <div class="text-7xl mb-3" x-text="result.ok?'✓':'✕'"></div>
       <div class="text-3xl md:text-5xl font-bold mb-3" x-text="result.title"></div>
-      <div class="text-xl md:text-2xl mb-6" x-text="result.detail"></div>
+      <div class="text-xl md:text-2xl mb-2" x-text="result.detail"></div>
+      <div class="text-xs text-white/70 mb-6" x-text="'Server said: '+result.code"></div>
+      <div x-show="user&&role==='admin'&&result.scannedText" class="text-xs text-white/60 mb-4" x-text="'Scanned: '+result.scannedText.slice(0,14)"></div>
       <div x-show="result.t&&result.t.printed" class="mb-6 rounded-xl border border-amber-200/40 bg-amber-100/20 px-4 py-3 text-base font-semibold text-amber-50">This ticket is already marked printed. Do not print a duplicate copy.</div>
       <template x-if="result.t">
         <div>
@@ -768,6 +770,8 @@ end $$;</pre>
   <div class="text-3xl font-black mt-3" x-text="tierLabel(gt.tier)"></div>
   <div class="font-mono text-lg" x-text="gt.number"></div>
   <div class="text-sm text-stone-500 mt-1" x-text="access[gt.tier]"></div>
+  <div class="mt-3 text-xs text-stone-400" x-text="'Code refreshed at '+gRefreshedAt"></div>
+  <div class="text-xs text-stone-400" x-text="'Phone: '+gDevice.slice(0,4)"></div>
   </div>
   <p class="text-xs text-white/50 text-center">Show this live QR at the gate. Do not screenshot or share the screen; lost or shared tickets may be locked.</p>
   </div>
@@ -830,7 +834,7 @@ function app(){
   return {
     tab:SESS?(SESS.role==='gatekeeper'?'gate':SESS.role==='producer'?'tickets':'design'):'design', user:SESS, guest:GUEST, request:REQUEST, gt:null, gErr:'', requestTiers:[{name:'GEN',price:50000},{name:'VIP',price:100000},{name:'TABLE',price:3000000}], requestTier:'GEN', requestForm:{name:'',phone:'',email:'',payment:'Mobile Money',paymentPhone:'',cardNumber:'',expiry:'',cvv:''}, requestBusy:false, requestMessage:'', requestOk:false, requestTicket:null, lu:'', lp:'', showPw:false, loginErr:'', loginBusy:false, staff:[], nu:'', np:'', nr:'gatekeeper', staffMsg:'', staffOk:true, appUrl:localStorage.getItem(AU)||'', cloud:'offline', cloudErr:'', pending:[], syncing:false, flushing:false, tickets:[], tpl:defaultTpl(), pTier:'VIP', pName:'Amina Nakato', dTab:'canvas', selKey:'title', view:'edit', guides:null, tilt:{rx:0,ry:0,gx:50,gy:50}, presets:PRESETS, fonts:FONTS,
     gTier:'GEN', gQty:10, gName:'', busy:false, q:'', fTier:'', fStatus:'', sel:{},
-  gState:'', gPayload:'', gSeconds:0, gTtlPercent:0, gOnline:true, gDevice:'', gTtl:30, gTimer:null, gRefreshTimer:null, gTokenTimer:null,
+  gState:'', gPayload:'', gRefreshedAt:'', gSeconds:0, gTtlPercent:0, gOnline:true, gDevice:'', gTtl:30, gTimer:null, gRefreshTimer:null,
     perSheet:6, paper:'A4', printHTML:'', drag:null,
     scanner:null, camError:'', result:null, locked:false, man:'',
     impMode:'merge', impDesign:true, msg:'', msgOk:true,
@@ -1049,52 +1053,24 @@ function app(){
     async stopScan(){ if(!this.scanner) return; const s=this.scanner; this.scanner=null; try{ await s.stop(); s.clear(); }catch(e){} },
 
     async onScan(text,manual){
-      if(!this.can('gate')||this.locked||!String(text||'').trim()) return;
-      this.locked=true; let t=null, scannedCode='';
-      const raw=String(text).trim();
-      const fields='number, tier, code, salt, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at';
-      const normalizedNumber=value=>{
-        const m=String(value||'').trim().toUpperCase().match(/^(GEN|VIP|TABLE)-?(\d+)$/);
-        return m?`${m[1]}-${m[2].padStart(4,'0')}`:'';
-      };
-      const loadTicket=async(number,token,requireToken)=>{
-        const normalized=normalizedNumber(number);
-        if(!normalized) return null;
-        if(sb&&navigator.onLine){
-          // Fetch by the canonical serial only. Token comparison stays local so malformed QR
-          // payloads can never become PostgREST filters and cause a 400 response.
-          const r=await sb.from('tickets').select(fields).eq('number',normalized).maybeSingle();
-          if(r.error||!r.data) return null;
-          const row=this.fromRow(r.data), expected=String(token||'').trim().toUpperCase();
-          if(requireToken){
-            const current=row.shared?String(row.activeToken||'').trim().toUpperCase():String(row.code||row.salt||'').trim().toUpperCase();
-            if(!expected||!current||expected!==current) return null;
-          }
-          return row;
-        }
-        const row=this.tickets.find(x=>x.number===normalized);
-        if(!row) return null;
-        if(requireToken){
-          const expected=String(token||'').trim().toUpperCase(), current=row.shared?String(row.activeToken||'').trim().toUpperCase():String(row.code||row.salt||'').trim().toUpperCase();
-          if(!expected||!current||expected!==current) return null;
-        }
-        return row;
-      };
-      if(manual){
-        const number=normalizedNumber(raw);
-        t=await loadTicket(number,'',false);
-      }else{
-        const parts=raw.split('|'), tag=parts[0], num=parts[1], code=parts.slice(2).join('|');
-        if(tag==='TKT'){
-          scannedCode=String(code||'').trim().toUpperCase();
-          t=await loadTicket(num,scannedCode,true);
-        }
+      if(!this.can('gate')||this.locked||(!manual&&!text)) return;
+      this.locked=true;
+      const raw=manual?String(text||''):text;
+      try{
+        if(!sb||!navigator.onLine) throw new Error('No connection');
+        const r=await sb.rpc('scan_ticket',{p_token:this.user.token,p_payload:manual?'':raw,p_manual:!!manual,p_check:null});
+        if(r.error) throw r.error;
+        const answer=Array.isArray(r.data)?r.data[0]:r.data||{};
+        const code=String(answer.code||answer.result||'INVALID').toUpperCase();
+        const labels={OK:['VALID TICKET','ENTRY ALLOWED'],DUPLICATE:['ALREADY USED',answer.used_at?'USED AT '+this.fmt(answer.used_at):'This ticket was already scanned'],EXPIRED:['QR EXPIRED','This QR code has expired'],INVALID:['INVALID / FAKE TICKET','The scanned code is not valid'],DIGITAL_ONLY:['DIGITAL TICKET','Scan the live QR from the ticket page'],NOT_ACTIVATED:['NOT ACTIVATED','This ticket is not activated'],VOID:['CANCELLED','This ticket has been cancelled'],TABLE_FULL:['TABLE FULL','No table seats remain']};
+        const [title,detail]=labels[code]||[code,'The server returned an unrecognized result'];
+        this.result={ok:code==='OK',code,title,detail,scannedText:manual?'':raw,t:answer.number?this.fromRow(answer):null};
+        this.beep(this.result.ok);
+        if(navigator.vibrate) navigator.vibrate(this.result.ok?120:[200,100,200]);
+      }catch(e){
+        if(/not allowed/i.test(e.message||'')){ this.logout(); this.result={ok:false,code:'AUTH',title:'SESSION ENDED',detail:'Please sign in again',scannedText:manual?'':raw}; }
+        else this.result={ok:false,code:'ERROR',title:'NO CONNECTION / SERVER ERROR',detail:e.message||'The server could not be reached',scannedText:manual?'':raw};
       }
-      if(!t) this.result={ok:false,title:'INVALID / EXPIRED TICKET',detail:'ACCESS DENIED — QR CODE IS INVALID OR EXPIRED'};
-      else if(t.status==='Used') this.result={ok:false,title:'TICKET ALREADY USED',detail:'ALREADY SCANNED AT '+this.fmt(t.usedAt),t};
-      else{ const ok=await this.claim(t); this.result=ok?{ok:true,title:'VALID TICKET - ENTRY ALLOWED',detail:t.printed?'ENTRY ALLOWED · ALREADY PRINTED — DO NOT PRINT A DUPLICATE':'ENTRY ALLOWED',t:{...t}}:{ok:false,title:'TICKET ALREADY USED',detail:'ALREADY SCANNED AT '+this.fmt(t.usedAt),t}; }
-      this.beep(this.result.ok);
-      if(navigator.vibrate) navigator.vibrate(this.result.ok?120:[200,100,200]);
     },
     nextScan(){ this.result=null; setTimeout(()=>{this.locked=false;},400); },
     beep(ok){
@@ -1355,7 +1331,7 @@ function app(){
           if(!d.error&&d.data) this.tpl=this.mergeTpl(d.data);
         }catch(e){}
         await this.refreshLiveTicket();
-        this.gRefreshTimer=setInterval(()=>this.refreshLiveTicket(),30000);
+        this.gRefreshTimer=setInterval(()=>this.refreshLiveTicket(),18000);
         this.gOnline=navigator.onLine;
         window.addEventListener('online',()=>{this.gOnline=true;this.refreshLiveTicket();});
         window.addEventListener('offline',()=>{this.gOnline=false;});
@@ -1367,36 +1343,23 @@ function app(){
     async refreshLiveTicket(){
       if(!sb||!this.guest||!navigator.onLine) return;
       try{
-        const number=String(this.guest.number||'').trim().toUpperCase();
         const r=await Promise.race([
-          sb.from('tickets').select('number, tier, code, buyer, status, created_at, used_at, printed, shared').eq('number',number).maybeSingle(),
+          sb.rpc('ticket_live',{p_number:this.guest.number,p_device:this.gDevice}),
           new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout')),5000))
         ]);
         if(r.error) throw r.error;
-        if(!r.data){
-          if(!this.gt) this.gErr='Ticket Not Found. Check the link and try again.';
-          return;
-        }
-        // The number is authoritative. The URL suffix is only a compatibility hint;
-        // stale or differently-cased suffixes must never make an existing ticket disappear.
-        this.gt=this.fromRow(r.data); this.gState=this.gt.status==='Used'?'USED':'OK'; this.gErr='';
-        this.gPayload=`TKT|${this.gt.number}|${this.gt.code}`;
-        this.gTtl=30; this.gSeconds=this.gTtl; this.gTtlPercent=100;
+        const answer=Array.isArray(r.data)?r.data[0]:r.data;
+        if(!answer||!answer.payload) throw new Error('Ticket Not Found');
+        this.gt={number:answer.number||this.guest.number,tier:answer.tier,buyer:answer.buyer||'',status:answer.status,usedAt:answer.used_at,printed:!!answer.printed,shared:true};
+        this.gPayload=answer.payload;
+        this.gState=answer.status==='Used'?'USED':answer.status==='Void'?'VOID':'OK';
+        this.gErr=''; this.gOnline=true; this.gRefreshedAt=new Date().toLocaleTimeString();
+        this.gTtl=18; this.gSeconds=this.gTtl; this.gTtlPercent=100;
         clearInterval(this.gTimer); this.gTimer=setInterval(()=>{this.gSeconds=Math.max(0,this.gSeconds-1);this.gTtlPercent=this.gTtl?this.gSeconds/this.gTtl*100:0;},1000);
       }catch(e){
         this.gOnline=navigator.onLine;
-        if(!this.gt) this.gErr=/timeout|network|fetch|lookup/i.test(e.message||'')?'Could not load this ticket. Check your connection and try again.':'Could not load this ticket. Check your connection and try again.';
+        if(!this.gt) this.gErr=e.message==='Ticket Not Found'?'Ticket Not Found. Check the link and try again.':'Could not load this ticket. Check your connection and try again.';
       }
-    },
-
-    async rotateGuestToken(){
-      if(!sb||!this.gt||!this.gt.shared||this.gt.status==='Used'||!navigator.onLine) return;
-      const activeToken=this.rnd(24), tokenUpdatedAt=new Date().toISOString();
-      try{
-        const r=await sb.from('tickets').update({active_token:activeToken,token_updated_at:tokenUpdatedAt}).eq('number',this.gt.number).eq('shared',true).eq('status','Unused').select('number, tier, code, salt, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at').maybeSingle();
-        if(r.error||!r.data) return;
-        this.gt=this.fromRow(r.data); this.gPayload=`TKT|${this.gt.number}|${this.gt.activeToken}`;
-      }catch(e){}
     },
 
     designChanged(){
