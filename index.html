@@ -1348,23 +1348,34 @@ function app(){
     async refreshLiveTicket(){
       if(!sb||!this.guest||!navigator.onLine) return;
       try{
-        const r=await Promise.race([
-          sb.from('tickets').select('number, tier, code, salt, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at').eq('number',this.guest.number).maybeSingle(),
-          new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout')),5000))
-        ]);
-        if(r.error) throw r.error;
+        const number=this.guest.number;
+        const selects=[
+          'number, tier, code, salt, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at',
+          'number, tier, code, salt, buyer, status, created_at, used_at, printed, shared',
+          'number, tier, code, buyer, status, created_at, used_at, printed, shared'
+        ];
+        let r=null;
+        for(const columns of selects){
+          const attempt=await Promise.race([
+            sb.from('tickets').select(columns).eq('number',number).maybeSingle(),
+            new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout')),5000))
+          ]);
+          if(!attempt.error){ r=attempt; break; }
+        }
+        if(!r) throw new Error('Ticket lookup failed');
         if(!r.data) throw new Error('Ticket Not Found');
         const suppliedToken=String(this.guest.code||'').toUpperCase();
         const validTokens=[r.data.active_token,r.data.salt,r.data.code].filter(Boolean).map(String).map(v=>v.toUpperCase());
-        // The number is authoritative. A stale or rotated suffix must never hide an existing ticket.
+        // Ticket number is authoritative. A stale or rotated suffix never hides an existing ticket.
         if(suppliedToken&&!validTokens.includes(suppliedToken)) this.gState='OK';
-        this.gt=this.fromRow(r.data); this.gState='OK'; this.gPayload=`TKT|${this.gt.number}|${this.gt.activeToken||this.gt.code}`;
+        this.gt=this.fromRow(r.data); this.gState='OK'; this.gErr='';
+        this.gPayload=`TKT|${this.gt.number}|${this.gt.activeToken||this.gt.code}`;
         this.gTtl=30; this.gSeconds=this.gTtl; this.gTtlPercent=100;
         clearInterval(this.gTimer); this.gTimer=setInterval(()=>{this.gSeconds=Math.max(0,this.gSeconds-1);this.gTtlPercent=this.gTtl?this.gSeconds/this.gTtl*100:0;},1000);
         if(this.gt.shared&&!this.gt.usedAt) this.rotateGuestToken();
       }catch(e){
         this.gOnline=navigator.onLine;
-        if(!this.gt) this.gErr=/timeout|network|fetch/i.test(e.message||'')?'Could not load this ticket. Check your connection and try again.':'Ticket Not Found';
+        if(!this.gt) this.gErr=/timeout|network|fetch|lookup/i.test(e.message||'')?'Could not load this ticket. Check your connection and try again.':'Ticket Not Found';
       }
     },
 
