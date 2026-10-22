@@ -1052,27 +1052,47 @@ function app(){
       if(!this.can('gate')||this.locked||!String(text||'').trim()) return;
       this.locked=true; let t=null, scannedCode='';
       const raw=String(text).trim();
+      const fields='number, tier, code, salt, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at';
+      const normalizedNumber=value=>{
+        const m=String(value||'').trim().toUpperCase().match(/^(GEN|VIP|TABLE)-?(\d+)$/);
+        return m?`${m[1]}-${m[2].padStart(4,'0')}`:'';
+      };
+      const loadTicket=async(number,token,requireToken)=>{
+        const normalized=normalizedNumber(number);
+        if(!normalized) return null;
+        if(sb&&navigator.onLine){
+          // Fetch by the canonical serial only. Token comparison stays local so malformed QR
+          // payloads can never become PostgREST filters and cause a 400 response.
+          const r=await sb.from('tickets').select(fields).eq('number',normalized).maybeSingle();
+          if(r.error||!r.data) return null;
+          const row=this.fromRow(r.data), expected=String(token||'').trim().toUpperCase();
+          if(requireToken){
+            const current=row.shared?String(row.activeToken||'').trim().toUpperCase():String(row.code||row.salt||'').trim().toUpperCase();
+            if(!expected||!current||expected!==current) return null;
+          }
+          return row;
+        }
+        const row=this.tickets.find(x=>x.number===normalized);
+        if(!row) return null;
+        if(requireToken){
+          const expected=String(token||'').trim().toUpperCase(), current=row.shared?String(row.activeToken||'').trim().toUpperCase():String(row.code||row.salt||'').trim().toUpperCase();
+          if(!expected||!current||expected!==current) return null;
+        }
+        return row;
+      };
       if(manual){
-        const m=raw.toUpperCase().match(/^(GEN|VIP|TABLE)-?(\d+)$/);
-        if(m) scannedCode='';
-        const number=m?`${m[1]}-${m[2].padStart(4,'0')}`:'';
-        if(number&&sb&&navigator.onLine){
-          const r=await sb.from('tickets').select('number, tier, code, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at').eq('number',number).maybeSingle();
-          if(!r.error&&r.data) t=this.fromRow(r.data);
-        }else if(number) t=this.tickets.find(x=>x.number===number);
+        const number=normalizedNumber(raw);
+        t=await loadTicket(number,'',false);
       }else{
-        const [tag,num,code]=raw.split('|');
-        if(tag==='TKT'){ scannedCode=String(code||'').toUpperCase();
-          if(sb&&navigator.onLine){
-            const r=await sb.from('tickets').select('number, tier, code, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at').eq('number',num).maybeSingle();
-            if(!r.error&&r.data) t=this.fromRow(r.data);
-          }else t=this.tickets.find(x=>x.number===num);
+        const parts=raw.split('|'), tag=parts[0], num=parts[1], code=parts.slice(2).join('|');
+        if(tag==='TKT'){
+          scannedCode=String(code||'').trim().toUpperCase();
+          t=await loadTicket(num,scannedCode,true);
         }
       }
-      if(t&&scannedCode&&String(t.shared?t.activeToken||t.code:t.code).toUpperCase()!==scannedCode) t=null;
-      if(!t) this.result={ok:false,title:'INVALID OR FAKE TICKET',detail:'ACCESS DENIED — NOT FOUND IN DATABASE'};
+      if(!t) this.result={ok:false,title:'INVALID / EXPIRED TICKET',detail:'ACCESS DENIED — QR CODE IS INVALID OR EXPIRED'};
       else if(t.status==='Used') this.result={ok:false,title:'TICKET ALREADY USED',detail:'ALREADY SCANNED AT '+this.fmt(t.usedAt),t};
-      else{ const ok=await this.claim(t); this.result=ok?{ok:true,title:'VALID TICKET',detail:t.printed?'ENTRY ALLOWED · ALREADY PRINTED — DO NOT PRINT A DUPLICATE':'ENTRY ALLOWED',t:{...t}}:{ok:false,title:'TICKET ALREADY USED',detail:'ALREADY SCANNED AT '+this.fmt(t.usedAt),t}; }
+      else{ const ok=await this.claim(t); this.result=ok?{ok:true,title:'VALID TICKET - ENTRY ALLOWED',detail:t.printed?'ENTRY ALLOWED · ALREADY PRINTED — DO NOT PRINT A DUPLICATE':'ENTRY ALLOWED',t:{...t}}:{ok:false,title:'TICKET ALREADY USED',detail:'ALREADY SCANNED AT '+this.fmt(t.usedAt),t}; }
       this.beep(this.result.ok);
       if(navigator.vibrate) navigator.vibrate(this.result.ok?120:[200,100,200]);
     },
