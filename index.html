@@ -51,7 +51,49 @@
 <body x-data="app()" x-init="init()" @pointermove.window="dragMove($event)" @pointerup.window="dragEnd()" @keydown.enter.window="if(result) nextScan()">
 <style x-text="`@page{size:${paper};margin:10mm}`"></style>
 
-<header x-show="user&&!guest" x-cloak class="bg-[#1b2430] text-white ui">
+  <!-- PUBLIC TICKET REQUEST -->
+  <section x-show="request&&!guest" x-cloak class="min-h-screen bg-stone-100 px-4 py-8 ui">
+    <div class="mx-auto max-w-2xl space-y-5">
+      <div class="rounded-2xl bg-[#1b2430] p-6 text-white shadow-lg">
+        <p class="text-xs font-semibold uppercase tracking-[.2em] text-sky-300">Kivvulu ticketing</p>
+        <h1 class="mt-2 text-3xl font-bold">Get your digital ticket</h1>
+        <p class="mt-2 text-sm text-stone-300">Choose your access level, complete the payment simulation, and receive your ticket pass instantly.</p>
+      </div>
+      <form @submit.prevent="submitRequest()" class="card space-y-5 shadow-sm">
+        <div>
+          <h2 class="text-lg font-bold text-stone-800">Ticket details</h2>
+          <div class="mt-3 grid gap-3 sm:grid-cols-3">
+            <template x-for="tier in requestTiers" :key="tier.name">
+              <label class="cursor-pointer rounded-xl border p-3 transition" :class="requestTier===tier.name?'border-sky-500 bg-sky-50 ring-2 ring-sky-200':'border-stone-200 hover:border-stone-400'">
+                <input type="radio" class="sr-only" name="request-tier" :value="tier.name" x-model="requestTier">
+                <span class="block text-sm font-bold" x-text="tierLabel(tier.name)"></span>
+                <span class="mt-1 block text-sm text-stone-600" x-text="formatUgx(tier.price)"></span>
+              </label>
+            </template>
+          </div>
+        </div>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class="lbl">Full name<input class="inp mt-1" required x-model.trim="requestForm.name" autocomplete="name"></label>
+          <label class="lbl">Phone number<input class="inp mt-1" required type="tel" x-model.trim="requestForm.phone" autocomplete="tel" placeholder="07xx xxx xxx"></label>
+          <label class="lbl sm:col-span-2">Email address<input class="inp mt-1" required type="email" x-model.trim="requestForm.email" autocomplete="email"></label>
+        </div>
+        <fieldset>
+          <legend class="lbl mb-2">Payment method</legend>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="cursor-pointer rounded-xl border p-3" :class="requestForm.payment==='Mobile Money'?'border-sky-500 bg-sky-50':'border-stone-200'"><input class="mr-2" type="radio" value="Mobile Money" x-model="requestForm.payment">Mobile Money <span class="text-xs text-stone-500">MTN / Airtel prompt</span></label>
+            <label class="cursor-pointer rounded-xl border p-3" :class="requestForm.payment==='Card'?'border-sky-500 bg-sky-50':'border-stone-200'"><input class="mr-2" type="radio" value="Card" x-model="requestForm.payment">Credit / debit card</label>
+          </div>
+        </fieldset>
+        <div x-show="requestForm.payment==='Mobile Money'" x-cloak><label class="lbl">Mobile Money number<input class="inp mt-1" type="tel" x-model.trim="requestForm.paymentPhone" placeholder="07xx xxx xxx"></label></div>
+        <div x-show="requestForm.payment==='Card'" x-cloak class="grid gap-3 sm:grid-cols-2"><label class="lbl sm:col-span-2">Card number<input class="inp mt-1" inputmode="numeric" maxlength="19" x-model.trim="requestForm.cardNumber" placeholder="Simulation only"></label><label class="lbl">Expiry<input class="inp mt-1" x-model.trim="requestForm.expiry" placeholder="MM/YY"></label><label class="lbl">CVV<input class="inp mt-1" maxlength="4" x-model.trim="requestForm.cvv" placeholder="123"></label></div>
+        <div class="flex items-center justify-between border-t border-stone-200 pt-4"><span class="font-bold text-stone-800">Total: <span x-text="formatUgx(requestPrice)"></span></span><button class="btn-dark" :disabled="requestBusy" x-text="requestBusy?'Processing…':'Pay and get ticket'"></button></div>
+        <p x-show="requestMessage" x-text="requestMessage" class="rounded-lg p-3 text-sm" :class="requestOk?'bg-emerald-50 text-emerald-700':'bg-rose-50 text-rose-700'"></p>
+      </form>
+      <div x-show="requestTicket" x-cloak class="card text-center shadow-sm"><p class="text-sm font-semibold text-emerald-700">Payment successful. Your digital pass is ready.</p><p class="mt-2 font-mono text-xl font-bold" x-text="requestTicket?.number"></p><a class="btn-dark mt-4 inline-block" :href="requestTicket&&ticketHref(requestTicket)">Open digital ticket</a></div>
+    </div>
+  </section>
+
+  <header x-show="user&&!guest&&!request" x-cloak class="bg-[#1b2430] text-white ui">
   <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
     <h1 class="text-2xl tracking-tight">Gatekeeper</h1>
     <div class="flex items-center gap-2 ml-auto text-xs">
@@ -72,7 +114,7 @@
 <main x-show="user&&!guest" x-cloak class="max-w-6xl mx-auto px-4 py-6 ui">
 
 <!-- DESIGN -->
-<section x-show="tab==='design'" x-cloak class="dz rounded-2xl bg-[#0f1115] p-3 lg:p-4 grid lg:grid-cols-[1fr_370px] gap-4 text-stone-200">
+<section x-show="can('design')&&tab==='design'" x-cloak class="dz rounded-2xl bg-[#0f1115] p-3 lg:p-4 grid lg:grid-cols-[1fr_370px] gap-4 text-stone-200">
   <div class="min-w-0">
     <div class="flex flex-wrap items-center gap-2 mb-3">
       <div class="flex rounded-lg bg-white/5 p-1 mr-auto">
@@ -80,8 +122,8 @@
           <button :data-tip="tip" @click="view=v" class="px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-300" :class="view===v?'bg-sky-500 text-white shadow':'text-stone-400 hover:text-white'" x-text="l"></button>
         </template>
       </div>
-      <select x-model="pTier" class="dinp !w-auto" aria-label="Preview tier"><option>Ordinary</option><option>VIP</option><option>VVIP</option></select>
-      <input x-model="pName" class="dinp !w-40" placeholder="Sample name" aria-label="Sample name">
+      <select x-model="pTier" class="dinp !w-auto" aria-label="Preview tier"><option value="GEN">GEN</option><option value="VIP">VIP</option><option value="TABLE">TABLE</option></select>
+      <input x-model="pName" class="dinp !w-40" placeholder="Internal note (not printed)" aria-label="Internal note">
     </div>
     <div class="rounded-xl p-4 sm:p-8 min-h-[320px] flex items-center justify-center" style="background-color:#12151b;background-image:radial-gradient(#2a2f3a 1px,transparent 1px);background-size:18px 18px">
       <div x-show="view==='edit'" class="w-full">
@@ -174,12 +216,22 @@
       <!-- Brand -->
       <div x-show="dTab==='brand'" x-transition.opacity.duration.300ms class="space-y-4">
         <label class="dlbl">Event title <input x-model="tpl.eventTitle" class="dinp mt-1"></label>
+        <label class="dlbl">Presenter <input x-model="tpl.eventOrganizer" class="dinp mt-1"></label>
+        <label class="dlbl">Subtitle <input x-model="tpl.eventSub" class="dinp mt-1"></label>
+        <label class="dlbl">Date <input x-model="tpl.eventDate" class="dinp mt-1"></label>
+        <label class="dlbl">Venue <input x-model="tpl.eventVenue" class="dinp mt-1"></label>
+        <label class="dlbl">Reservations <input x-model="tpl.eventContact" class="dinp mt-1"></label>
         <div>
           <div class="dlbl mb-1">Background artwork</div>
           <div class="flex gap-2">
             <label class="dbtn flex-1 text-center cursor-pointer">Upload image<input type="file" accept="image/*" class="hidden" @change="uploadImg($event,'bg',2000,'image/jpeg')"></label>
             <button class="dbtn" x-show="tpl.bg" @click="tpl.bg=''">Remove</button></div>
-          <div x-show="tpl.bg" class="mt-2 h-16 rounded-lg bg-cover bg-center border border-white/10" :style="{'background-image':`url(${tpl.bg})`}"></div>
+          <div x-show="tpl.bg" class="mt-2 space-y-2">
+            <div class="h-16 rounded-lg bg-cover border border-white/10" :style="{'background-image':`url(${tpl.bg})`,'background-size':(tpl.bgScale*100)+'%','background-position':tpl.bgX+'% '+tpl.bgY+'%'}"></div>
+            <label class="dlbl">Flyer horizontal position <input type="range" min="0" max="100" x-model.number="tpl.bgX"></label>
+            <label class="dlbl">Flyer vertical position <input type="range" min="0" max="100" x-model.number="tpl.bgY"></label>
+            <label class="dlbl">Flyer size <span class="float-right text-stone-300" x-text="Math.round(tpl.bgScale*100)+'%'"></span><input type="range" min="0.5" max="2.5" step="0.05" x-model.number="tpl.bgScale"></label>
+          </div>
         </div>
         <div>
           <div class="dlbl mb-1">Logo or sponsor badge</div>
@@ -230,7 +282,7 @@
 </section>
 
  <!-- TICKETS -->
-<section x-show="tab==='tickets'" x-cloak class="space-y-6">
+<section x-show="can('tickets')&&tab==='tickets'" x-cloak class="space-y-6">
   <!-- Top Stat Cards Bar -->
   <div class="grid grid-cols-3 md:grid-cols-6 gap-3 text-center">
     <template x-for="s in statCards" :key="s.l">
@@ -253,9 +305,9 @@
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
       <label class="lbl font-medium text-stone-700">Ticket Tier 
         <select x-model="gTier" class="inp mt-1.5 focus:ring-2 focus:ring-sky-500">
-          <option>Ordinary</option>
-          <option>VIP</option>
-          <option>VVIP</option>
+<option value="GEN">GEN</option>
+  <option value="VIP">VIP</option>
+  <option value="TABLE">TABLE</option>
         </select>
       </label>
       <label class="lbl font-medium text-stone-700">Quantity (Batch Count) 
@@ -304,10 +356,10 @@
         <input x-model="q" placeholder="Search serial, name or secure code..." class="inp pl-3 bg-white" aria-label="Search tickets">
       </div>
       <select x-model="fTier" class="inp !w-36 bg-white" aria-label="Filter by tier">
-        <option value="">All Tiers</option>
-        <option>Ordinary</option>
-        <option>VIP</option>
-        <option>VVIP</option>
+<option value="">All Tiers</option>
+<option value="GEN">GEN</option>
+  <option value="VIP">VIP</option>
+  <option value="TABLE">TABLE</option>
       </select>
       <select x-model="fStatus" class="inp !w-36 bg-white" aria-label="Filter by status">
         <option value="">All Statuses</option>
@@ -315,9 +367,10 @@
         <option value="Used">Used</option>
         <option value="Unprinted">Unprinted</option>
       </select>
-      <div class="flex gap-2 ml-auto">
+      <div class="flex gap-2 ml-auto flex-wrap justify-end">
+        <button class="btn bg-sky-600 hover:bg-sky-700 text-white text-xs font-medium px-3 py-2" @click="shareSelected()" :disabled="!shareCount" x-text="shareCount?`Share Selected (${shareCount}/8)`:'Share Selected'"></button>
         <button class="btn bg-white hover:bg-stone-100 text-stone-700 text-xs font-medium px-3 py-2" @click="filtered.forEach(t=>sel[t.number]=true)">Select Shown</button>
-        <button class="btn bg-white hover:bg-stone-100 text-stone-700 text-xs font-medium px-3 py-2" @click="filtered.filter(t=>!t.printed).forEach(t=>sel[t.number]=true)">Select Unprinted</button>
+        <button class="btn bg-white hover:bg-stone-100 text-stone-700 text-xs font-medium px-3 py-2" @click="filtered.filter(t=>!t.printed&&!t.shared).forEach(t=>sel[t.number]=true)">Select Unprinted</button>
         <button class="btn bg-white hover:bg-rose-50 text-rose-600 text-xs font-medium px-3 py-2 border-stone-200" @click="sel={}">Clear Selection</button>
       </div>
     </div>
@@ -348,7 +401,7 @@
               </td>
               <td class="p-3 font-mono font-semibold text-stone-800" x-text="t.number"></td>
               <td class="p-3">
-                <span class="px-2.5 py-1 rounded-full text-xs font-bold tracking-wide shadow-2xs" :class="tierClass(t.tier)" x-text="t.tier"></span>
+                <span class="px-2.5 py-1 rounded-full text-xs font-bold tracking-wide shadow-2xs" :class="tierClass(t.tier)" x-text="tierLabel(t.tier)"></span>
               </td>
               <td class="p-3">
                 <input x-model="t.buyer" @change="patchTicket(t)" placeholder="Optional guest name" aria-label="Attendee name" class="w-40 bg-transparent border-b border-dashed border-stone-300 hover:border-stone-500 focus:border-sky-500 focus:outline-hidden py-1 text-xs">
@@ -363,7 +416,7 @@
                 <div x-show="t.shared" class="text-sky-600 text-[11px] font-medium">Shared</div>
               </td>
               <td class="p-3 text-right whitespace-nowrap space-x-2">
-                <button class="btn bg-white hover:bg-stone-100 text-xs font-medium px-2.5 py-1 border border-stone-300 shadow-2xs" @click="printTickets([t])">Print Single</button>
+                <button class="btn bg-white hover:bg-stone-100 text-xs font-medium px-2.5 py-1 border border-stone-300 shadow-2xs" @click="printTickets([t])" :disabled="t.shared">Print Single</button>
                 <button class="btn bg-white hover:bg-sky-50 text-xs font-medium px-2.5 py-1 border border-sky-300 text-sky-700 shadow-2xs" title="Send by WhatsApp or SMS" @click="shareTicket(t)">Share</button>
                 <button class="btn bg-white hover:bg-stone-100 text-xs font-medium px-2.5 py-1 border border-stone-300 shadow-2xs" @click="copyLink(t)">Copy link</button>
                 <button x-show="can('backup')" class="text-stone-400 hover:text-rose-600 p-1 transition-colors" @click="remove(t)" aria-label="Delete ticket">✕</button>
@@ -416,10 +469,17 @@
     <summary class="cursor-pointer font-bold text-stone-800 text-sm">Cloud setup: run this in the Supabase SQL editor (safe to re-run)</summary>
     <pre x-ref="sql" class="mt-3 bg-stone-900 text-stone-100 text-[11px] leading-relaxed rounded-lg p-3 overflow-x-auto max-h-96 overflow-y-auto">create extension if not exists pgcrypto with schema extensions;
 
+-- 0. CLEANUP: drop EVERY overloaded copy of the app functions so PostgREST can never be ambiguous
+do $$ declare r record; begin
+  for r in select p.oid::regprocedure as sig from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname in ('reserve_seq','purge_tickets','delete_tickets','digital_ticket','ticket_live','request_ticket','public_design','save_design','app_login','app_whoami','app_logout','staff_create','staff_delete','staff_password','_admin','_staff')
+  loop execute 'drop function if exists ' || r.sig || ' cascade'; end loop;
+end $$;
+
 -- tickets (safe to re-run)
 create table if not exists public.tickets (
   number text primary key,
-  tier text not null check (tier in ('Ordinary','VIP','VVIP')),
+  tier text not null check (tier in ('GEN','VIP','TABLE')),
   code text not null, salt text not null,
   buyer text not null default '',
   status text not null default 'Unused' check (status in ('Unused','Used')),
@@ -427,10 +487,28 @@ create table if not exists public.tickets (
   printed boolean not null default false
 );
 alter table public.tickets add column if not exists shared boolean not null default false;
+alter table public.tickets add column if not exists active_token text;
+alter table public.tickets add column if not exists token_updated_at timestamptz;
+-- repair an older tickets table: timestamp columns -&gt; epoch-ms bigint, remove invalid rows such as GEN-0NaN
+do $$ declare c text; begin
+  foreach c in array array['created_at','used_at'] loop
+    if exists (select 1 from information_schema.columns where table_schema='public' and table_name='tickets' and column_name=c and data_type like 'timestamp%') then
+      execute format('alter table public.tickets alter column %I drop default', c);
+      execute format('alter table public.tickets alter column %I type bigint using (extract(epoch from %I) * 1000)::bigint', c, c);
+    end if;
+  end loop;
+end $$;
+delete from public.tickets where number !~ '^(GEN|VIP|TABLE)-[0-9]{4,}$';
 create index if not exists tickets_created_idx on public.tickets (created_at, number);
 alter table public.tickets enable row level security;
 drop policy if exists "anon full access" on public.tickets;
-create policy "anon full access" on public.tickets for all to anon using (true) with check (true);
+drop policy if exists "anon read" on public.tickets;
+drop policy if exists "anon insert" on public.tickets;
+drop policy if exists "anon update" on public.tickets;
+create policy "anon read" on public.tickets for select to anon using (true);
+create policy "anon insert" on public.tickets for insert to anon with check (true);
+create policy "anon update" on public.tickets for update to anon using (true) with check (true);
+-- no anon DELETE policy: removals go through delete_tickets()/purge_tickets() with a staff token
 
 create table if not exists public.ticket_counters (tier text primary key, last int not null default 0);
 alter table public.ticket_counters enable row level security;
@@ -482,7 +560,7 @@ create or replace function public.staff_create(p_token text, n_user text, n_pass
 begin
   if not _admin(p_token) then raise exception 'Not allowed'; end if;
   if n_role not in ('producer','gatekeeper') then raise exception 'Invalid role'; end if;
-  if length(trim(n_user)) < 3 or length(n_pass) < 6 then raise exception 'Username needs 3+ characters and password 6+'; end if;
+  if length(trim(n_user)) &lt; 3 or length(n_pass) &lt; 6 then raise exception 'Username needs 3+ characters and password 6+'; end if;
   insert into users (username, role) values (lower(trim(n_user)), n_role);
   insert into user_secrets (username, pw_hash) values (lower(trim(n_user)), crypt(n_pass, gen_salt('bf')));
 end $$;
@@ -495,7 +573,7 @@ end $$;
 create or replace function public.staff_password(p_token text, t_user text, n_pass text) returns void language plpgsql security definer set search_path = public, extensions as $$
 begin
   if not _admin(p_token) then raise exception 'Not allowed'; end if;
-  if length(n_pass) < 6 then raise exception 'Password needs 6+ characters'; end if;
+  if length(n_pass) &lt; 6 then raise exception 'Password needs 6+ characters'; end if;
   update user_secrets set pw_hash = crypt(n_pass, gen_salt('bf')) where username = lower(t_user);
 end $$;
 
@@ -504,13 +582,40 @@ create or replace function public.reserve_seq(p_token text, p_tier text, p_qty i
 declare cur int;
 begin
   if not _staff(p_token) then raise exception 'Not allowed'; end if;
-  if p_tier not in ('Ordinary','VIP','VVIP') or p_qty < 1 or p_qty > 5000 then raise exception 'Bad request'; end if;
+  if p_tier not in ('GEN','VIP','TABLE') or p_qty &lt; 1 or p_qty &gt; 5000 then raise exception 'Bad request'; end if;
   perform pg_advisory_xact_lock(hashtext('seq_' || p_tier));
-  select coalesce(max(regexp_replace(number, '^.*-', '')::int), 0) into cur from tickets where tier = p_tier;
+  select coalesce(max(substring(number from '([0-9]+)$')::int), 0) into cur from tickets where tier = p_tier and number ~ '^[A-Z]+-[0-9]+$';
   cur := greatest(cur, coalesce((select last from ticket_counters where tier = p_tier), 0));
   insert into ticket_counters (tier, last) values (p_tier, cur + p_qty) on conflict (tier) do update set last = cur + p_qty;
-  return cur + 1;
+  return cur + 1;  -- first serial of the reserved block
 end $$;
+create or replace function public.delete_tickets(p_token text, p_numbers text[]) returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not _admin(p_token) then raise exception 'Not allowed'; end if;
+  delete from tickets where number = any(p_numbers);
+end $$;
+-- public ticket request: atomic numbering + insert, so guests can never hit 409 conflicts
+create or replace function public.request_ticket(p_tier text, p_buyer text) returns json language plpgsql security definer set search_path = public, extensions as $$
+declare n int; num text; s text; c text; r json;
+begin
+  if p_tier not in ('GEN','VIP','TABLE') then raise exception 'Bad request'; end if;
+  perform pg_advisory_xact_lock(hashtext('seq_' || p_tier));
+  select coalesce(max(substring(number from '([0-9]+)$')::int), 0) into n from tickets where tier = p_tier and number ~ '^[A-Z]+-[0-9]+$';
+  n := greatest(n, coalesce((select last from ticket_counters where tier = p_tier), 0)) + 1;
+  insert into ticket_counters (tier, last) values (p_tier, n) on conflict (tier) do update set last = n;
+  num := p_tier || '-' || lpad(n::text, 4, '0');
+  s := encode(gen_random_bytes(12), 'hex');
+  c := upper(left(encode(digest(num || '|' || s, 'sha256'), 'hex'), 12));
+  insert into tickets (number, tier, code, salt, buyer, status, created_at, printed, shared)
+    values (num, p_tier, c, s, left(coalesce(p_buyer, ''), 300), 'Unused', (extract(epoch from now()) * 1000)::bigint, false, false);
+  select row_to_json(t) into r from (select number, tier, code, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at from tickets where number = num) t;
+  return r;
+end $$;
+-- live gate check for a ticket link (2 arguments, trimmed and upper-cased)
+create or replace function public.ticket_live(p_number text, p_code text) returns json language sql security definer set search_path = public as $$
+  select json_build_object('valid', t.status = 'Unused', 'status', t.status, 'number', t.number, 'tier', t.tier, 'buyer', t.buyer, 'used_at', t.used_at)
+  from tickets t where t.number = upper(trim(p_number))
+   and (nullif(trim(p_code), '') is null or upper(coalesce(t.active_token,'')) = upper(trim(p_code)) or upper(coalesce(t.salt,'')) = upper(trim(p_code)) or upper(coalesce(t.code,'')) = upper(trim(p_code))) $$;
 create or replace function public.purge_tickets(p_token text) returns void language plpgsql security definer set search_path = public as $$
 begin
   if not _admin(p_token) then raise exception 'Not allowed'; end if;
@@ -518,8 +623,8 @@ begin
 end $$;
 
 -- digital ticket pages (guests, no login) and shared ticket design
-create or replace function public.digital_ticket(p_number text, p_code text) returns json language sql security definer set search_path = public as $$
-  select row_to_json(t) from (select number, tier, buyer, code, status from tickets where number = p_number and code = p_code) t $$;
+  create or replace function public.digital_ticket(p_number text, p_code text) returns json language sql security definer set search_path = public as $$
+  select row_to_json(t) from (select number, tier, code, buyer, status, created_at, used_at, printed, shared, active_token, salt, token_updated_at from tickets where number = upper(trim(p_number)) and (nullif(trim(p_code), '') is null or upper(coalesce(active_token, '')) = upper(trim(p_code)) or upper(coalesce(salt, '')) = upper(trim(p_code)) or upper(coalesce(code, '')) = upper(trim(p_code)))) t $$;
 create or replace function public.public_design() returns jsonb language sql security definer set search_path = public as $$
   select value from settings where key = 'design' $$;
 create or replace function public.save_design(p_token text, p_design jsonb) returns void language plpgsql security definer set search_path = public as $$
@@ -535,7 +640,10 @@ insert into public.user_secrets (username, pw_hash) values ('admin', extensions.
 do $$ begin
   begin alter publication supabase_realtime add table public.tickets; exception when duplicate_object then null; end;
   begin alter publication supabase_realtime add table public.users; exception when duplicate_object then null; end;
-end $$;</pre>
+end $$;
+
+notify pgrst, 'reload schema';
+</pre>
     <button class="btn-dark text-xs mt-3" @click="navigator.clipboard.writeText($refs.sql.textContent); alert('SQL copied')">Copy SQL</button>
   </details>
 
@@ -663,6 +771,7 @@ end $$;</pre>
       <div class="text-7xl mb-3" x-text="result.ok?'✓':'✕'"></div>
       <div class="text-3xl md:text-5xl font-bold mb-3" x-text="result.title"></div>
       <div class="text-xl md:text-2xl mb-6" x-text="result.detail"></div>
+      <div x-show="result.t&&result.t.printed" class="mb-6 rounded-xl border border-amber-200/40 bg-amber-100/20 px-4 py-3 text-base font-semibold text-amber-50">This ticket is already marked printed. Do not print a duplicate copy.</div>
       <template x-if="result.t">
         <div>
           <div class="text-5xl md:text-7xl font-black mb-2" x-text="result.t.tier.toUpperCase()"></div>
@@ -697,20 +806,25 @@ end $$;</pre>
     <div class="text-center text-sm text-white/60">Digital ticket</div>
     <p x-show="gErr" x-text="gErr" class="text-rose-300 text-center"></p>
     <p x-show="!gt&&!gErr" class="text-center text-white/60">Loading your ticket…</p>
-    <template x-if="gt">
-      <div class="space-y-4">
-        <p x-show="gt.status==='Used'" class="text-center text-amber-300 text-sm">This ticket has already been scanned at the gate.</p>
-        <div x-html="ticketHTML(gt,false,true)"></div>
-        <div class="bg-white rounded-2xl p-5 text-center text-stone-900">
-          <img :src="qrUrl(`TKT|${gt.number}|${gt.code}`)" alt="Ticket QR code" class="w-full max-w-[280px] mx-auto">
-          <div class="text-3xl font-black mt-3" x-text="gt.tier"></div>
-          <div class="font-mono text-lg" x-text="gt.number"></div>
-          <div class="text-stone-700" x-text="gt.buyer"></div>
-          <div class="text-sm text-stone-500 mt-1" x-text="access[gt.tier]"></div>
-        </div>
-        <p class="text-xs text-white/50 text-center">Show this QR code at the gate. Raise your screen brightness for faster scanning.</p>
-      </div>
-    </template>
+  <template x-if="gt">
+  <div class="space-y-4">
+  <p x-show="gState==='USED'" class="text-center text-amber-300 text-sm">This ticket has already been scanned at the gate.</p>
+  <p x-show="gState==='LOCKED'" class="text-center text-amber-300 text-sm">This ticket is temporarily locked to another device.</p>
+  <p x-show="gState==='NOT_DIGITAL'" class="text-center text-amber-300 text-sm">This ticket has not been shared as a digital ticket.</p>
+  <p x-show="gState==='VOID'" class="text-center text-rose-300 text-sm">This ticket has been voided.</p>
+  <div x-show="gState==='OK'" x-html="ticketHTML({...gt,livePayload:gPayload},false,true)"></div>
+  <div x-show="gState==='OK'" class="bg-white rounded-2xl p-5 text-center text-stone-900">
+  <div class="relative mx-auto w-full max-w-[280px]">
+  <img :src="gPayload?qrUrl(gPayload):''" alt="Live ticket QR code" class="w-full" :class="gOnline?'':'opacity-0'">
+  <div x-show="!gOnline" class="absolute inset-0 flex items-center justify-center rounded-lg bg-stone-100 px-4 text-sm font-semibold text-stone-700">QR hidden while offline</div>
+  </div>
+  <div class="text-3xl font-black mt-3" x-text="tierLabel(gt.tier)"></div>
+  <div class="font-mono text-lg" x-text="gt.number"></div>
+  <div class="text-sm text-stone-500 mt-1" x-text="access[gt.tier]"></div>
+  </div>
+  <p class="text-xs text-white/50 text-center">Show this live QR at the gate. Do not screenshot or share the screen; lost or shared tickets may be locked.</p>
+  </div>
+  </template>
   </div>
 </div>
 
@@ -723,18 +837,27 @@ const supabaseClient = window.supabase ? window.supabase.createClient(SUPABASE_U
 function app(){
   const DB='gatekeeper.tickets.v2', TP='gatekeeper.template.v2', PQ='gatekeeper.pending.v1', SF='gatekeeper.synced.v1', SK='gatekeeper.session.v1', AU='gatekeeper.appurl', DD='gatekeeper.designdirty', qc={}, sb=supabaseClient;
   let dt, quiet=false;
-  const SESS=(()=>{ try{ const x=JSON.parse(localStorage.getItem(SK)||'null'); return x&&x.username&&x.role&&x.token?x:null; }catch(e){ return null; } })();
-  const GM=location.hash.match(/^#\/t\/([A-Za-z]+-\d+)\.([A-Za-z0-9]+)$/), GUEST=GM?{number:GM[1],code:GM[2]}:null;
+  const SESS=(()=>{ try{ const x=JSON.parse(localStorage.getItem(SK)||'null'); if(!x||!x.username||!x.role||!x.token)return null; x.role=String(x.role).toLowerCase(); return ['admin','producer','gatekeeper'].includes(x.role)?x:null; }catch(e){ return null; } })();
+  const GUEST=location.hash.startsWith('#/t/')?(()=>{ const ticketId=decodeURIComponent(location.hash.slice(4)).trim(); const dot=ticketId.lastIndexOf('.'); const rawNumber=dot>0?ticketId.slice(0,dot):ticketId; const number=rawNumber.toUpperCase().replace(/^(GEN|VIP|TABLE)-?(\d+)$/,(m,t,n)=>`${t}-${n.padStart(4,'0')}`); return /^(GEN|VIP|TABLE)-\d{4}$/.test(number)?{ticketId,number,code:dot>0?ticketId.slice(dot+1):'',salt:dot>0?ticketId.slice(dot+1):''}:null; })():null;
+  const REQUEST=location.hash==='#/request';
   const FONTS={'Montserrat':"Montserrat,system-ui,sans-serif",'Poppins':"Poppins,system-ui,sans-serif",'Inter':"Inter,system-ui,sans-serif",'Oswald':"Oswald,Impact,sans-serif",'Playfair Display':"'Playfair Display',Georgia,serif",'Cinzel':"Cinzel,Georgia,serif",'Space Grotesk':"'Space Grotesk',system-ui,sans-serif",'Monospace':"ui-monospace,Menlo,Consolas,monospace"};
   const T0=(label,x,y,size,color,weight,font,o)=>({label,x,y,size,color,weight,font,ls:0,align:'left',transform:'none',sh:1,shc:'#000000',show:true,...o});
-  const defaultTpl=()=>({bg:'',logo:'',bgColor:'#1b2430',eventTitle:'Summer Fest 2026',aw:2,ah:1,radius:2,shadow:40,blur:0,bgOp:1,
-    gType:'none',g1:'#7c3aed',g2:'#0ea5e9',gAngle:135,gOp:.6,order:['title','tier','name','serial','logo','qr'],
-    el:{title:T0('Event title',5,8,6.5,'#ffffff',700,'Montserrat',{transform:'uppercase',ls:.05}),
-      tier:T0('Tier label',5,30,10,'#fbbf24',900,'Montserrat',{transform:'uppercase'}),
-      name:T0('Attendee name',5,62,5,'#ffffff',500,'Inter'),
-      serial:T0('Serial number',5,80,4.5,'#ffffff',500,'Monospace'),
-      logo:{label:'Logo / sponsor',x:80,y:6,size:14,show:true},
-      qr:{label:'QR code',x:68,y:18,size:27,show:true}}});
+  const defaultTpl=()=>({bg:'https://hebbkx1anhila5yf.public.blob.vercel-storage.com/qfp-Ml4ytytXTzMrBARws7YTF4Vupb3VAP.jpeg',logo:'',bgColor:'#5a0a0f',eventTitle:'Legacy of a Queen',eventOrganizer:'Queens Events presents',eventSub:'Queen Florence · Live in Concert',eventDate:'Friday 22 January 2027',eventVenue:'Front Page Hotel, Namasuba',eventContact:'Reservations: 0764733540 / 0752222294',eventTerms:'One-time entry · Copies are void · Lost or shared tickets are not replaceable',bgX:50,bgY:50,bgScale:1,aw:2,ah:1,radius:2,shadow:55,blur:0,bgOp:.72,
+    gType:'linear',g1:'#7a0a12',g2:'#12030a',gAngle:135,gOp:.45,order:['organizer','title','subtitle','date','venue','tier','seat','serial','check','contact','terms','logo','qr'],
+    el:{organizer:T0('Presenter',5,7,2.4,'#f6e3a1',500,'Cinzel',{transform:'uppercase',ls:.22}),
+      title:T0('Event title',5,14,5.4,'#ffffff',900,'Cinzel',{transform:'uppercase',ls:.04}),
+      subtitle:T0('Subtitle',5,32,2.8,'#e9b949',700,'Playfair Display'),
+      date:T0('Date',5,52,3.4,'#ffffff',700,'Montserrat'),
+      venue:T0('Venue',5,61,3,'#f1e0b4',500,'Montserrat'),
+      tier:T0('Ticket type',5,73,6,'#e9b949',900,'Cinzel',{transform:'uppercase'}),
+      seat:T0('TABLE & SEAT',38,76,3.4,'#ffffff',700,'Montserrat',{transform:'uppercase'}),
+      name:T0('Internal note (never printed)',5,62,5,'#ffffff',500,'Inter',{show:false}),
+      serial:T0('Serial number',70,67,2.6,'#ffffff',500,'Monospace'),
+      check:T0('Check code',70,73,2.2,'#e9b949',700,'Monospace'),
+      contact:T0('Reservations',5,88,2,'#f1e0b4',500,'Inter'),
+      terms:T0('Terms line',5,93,1.7,'#f1e0b4',500,'Inter'),
+      logo:{label:'Logo / sponsor',x:86,y:3,size:9,show:true},
+      qr:{label:'QR code',x:70,y:15,size:25,show:true}}});
   const PRESETS={
     'VIP Neon Cyberpunk':{p:{bgColor:'#0a0014',gType:'linear',g1:'#2b0057',g2:'#003a5c',gAngle:135,radius:3,shadow:70},
       el:{title:{color:'#00f0ff',font:'Space Grotesk',weight:700,ls:.15,sh:2,shc:'#00f0ff',x:5,y:8,size:5.5,transform:'uppercase'},
@@ -758,15 +881,17 @@ function app(){
         serial:{color:'#5b2a14',font:'Monospace',weight:700,align:'center',x:36,y:80,size:4.5,sh:0},qr:{x:66,y:16,size:28}}}
   };
   return {
-    tab:SESS&&SESS.role==='gatekeeper'?'gate':'design', user:SESS, guest:GUEST, gt:null, gErr:'', lu:'', lp:'', showPw:false, loginErr:'', loginBusy:false, staff:[], nu:'', np:'', nr:'gatekeeper', staffMsg:'', staffOk:true, appUrl:localStorage.getItem(AU)||'', cloud:'offline', cloudErr:'', pending:[], syncing:false, flushing:false, tickets:[], tpl:defaultTpl(), pTier:'VIP', pName:'Amina Nakato', dTab:'canvas', selKey:'title', view:'edit', guides:null, tilt:{rx:0,ry:0,gx:50,gy:50}, presets:PRESETS, fonts:FONTS,
-    gTier:'Ordinary', gQty:10, gName:'', busy:false, q:'', fTier:'', fStatus:'', sel:{},
+    tab:SESS?(SESS.role==='gatekeeper'?'gate':SESS.role==='producer'?'tickets':'design'):'design', user:SESS, guest:GUEST, request:REQUEST, gt:null, gErr:'', requestTiers:[{name:'GEN',price:50000},{name:'VIP',price:100000},{name:'TABLE',price:3000000}], requestTier:'GEN', requestForm:{name:'',phone:'',email:'',payment:'Mobile Money',paymentPhone:'',cardNumber:'',expiry:'',cvv:''}, requestBusy:false, requestMessage:'', requestOk:false, requestTicket:null, lu:'', lp:'', showPw:false, loginErr:'', loginBusy:false, staff:[], nu:'', np:'', nr:'gatekeeper', staffMsg:'', staffOk:true, appUrl:localStorage.getItem(AU)||'', cloud:'offline', cloudErr:'', pending:[], syncing:false, flushing:false, tickets:[], tpl:defaultTpl(), pTier:'VIP', pName:'Amina Nakato', dTab:'canvas', selKey:'title', view:'edit', guides:null, tilt:{rx:0,ry:0,gx:50,gy:50}, presets:PRESETS, fonts:FONTS,
+    gTier:'GEN', gQty:10, gName:'', busy:false, q:'', fTier:'', fStatus:'', sel:{},
+  gState:'', gPayload:'', gSeconds:0, gTtlPercent:0, gOnline:true, gDevice:'', gTtl:30, gTimer:null, gRefreshTimer:null, gTokenTimer:null,
     perSheet:6, paper:'A4', printHTML:'', drag:null,
     scanner:null, camError:'', result:null, locked:false, man:'',
     impMode:'merge', impDesign:true, msg:'', msgOk:true,
-    access:{Ordinary:'General admission',VIP:'VIP area access',VVIP:'All-access (VVIP)'},
+    access:{GEN:'General admission',VIP:'VIP area access',TABLE:'TABLE seating'},
+    tierLabel(t){ return {GEN:'GEN',VIP:'VIP',TABLE:'TABLE'}[t]||t; },
 
     init(){
-      try{ this.tickets=JSON.parse(localStorage.getItem(DB)||'[]'); }catch(e){}
+      try{ this.tickets=this.cleanTickets(JSON.parse(localStorage.getItem(DB)||'[]')); }catch(e){ this.tickets=[]; }
       try{ const t=JSON.parse(localStorage.getItem(TP)||'null'); if(t) this.tpl=this.mergeTpl(t); }catch(e){}
       this.$watch('tickets',v=>this.save(DB,v));
       this.$watch('tpl',v=>{ if(this.guest) return; this.save(TP,v); if(!quiet) this.designChanged(); });
@@ -788,25 +913,47 @@ function app(){
     save(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){ alert('Browser storage is full. Export a backup and use a smaller background image.'); } },
     fmt(ts){ return new Date(ts).toLocaleString(); },
     esc(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); },
-    tierClass(t){ return {Ordinary:'bg-stone-200 text-stone-800',VIP:'bg-amber-100 text-amber-900',VVIP:'bg-violet-100 text-violet-900'}[t]; },
+    tierClass(t){ return {GEN:'bg-stone-200 text-stone-800',VIP:'bg-amber-100 text-amber-900',TABLE:'bg-blue-100 text-blue-900'}[t]||'bg-stone-200 text-stone-800'; },
 
-    get sample(){ return {number:{Ordinary:'ORD',VIP:'VIP',VVIP:'VVIP'}[this.pTier]+'-0001',tier:this.pTier,buyer:this.pName,code:'SAMPLE000000'}; },
+    validNumber(n){ return /^(GEN|VIP|TABLE)-\d{4,}$/.test(String(n||'')); },
+    cleanTickets(list){
+      const m=new Map();
+      (Array.isArray(list)?list:[]).forEach(t=>{
+        if(!t||!this.validNumber(t.number)) return;
+        t={...t,createdAt:Number(t.createdAt)||Date.now()};
+        const o=m.get(t.number);
+        if(!o||(t.status==='Used'&&o.status!=='Used')) m.set(t.number,t);
+      });
+      return [...m.values()];
+    },
+    parseSeq(d){
+      if(Array.isArray(d)) d=d[0];
+      if(d&&typeof d==='object') d=d.reserve_seq??d.start??d.first??d.seq??Object.values(d)[0];
+      const n=parseInt(d,10);
+      if(!Number.isInteger(n)||n<1) throw new Error('The cloud returned an invalid ticket sequence. Run the latest setup SQL.');
+      return n;
+    },
+    get sample(){ return {number:{GEN:'GEN',VIP:'VIP',TABLE:'TABLE'}[this.pTier]+'-0001',tier:this.pTier,buyer:this.pName,code:'SAMPLE000000'}; },
     get selCount(){ return this.tickets.filter(t=>this.sel[t.number]).length; },
     get filtered(){
-      const q=this.q.trim().toLowerCase();
-      return this.tickets.filter(t=>(!this.fTier||t.tier===this.fTier)
-        &&(!this.fStatus||(this.fStatus==='Unprinted'?!t.printed:t.status===this.fStatus))
-        &&(!q||(t.number+' '+t.buyer+' '+t.code).toLowerCase().includes(q)));
+      const q=String(this.q||'').trim().toLowerCase(), seen=new Set();
+      return (Array.isArray(this.tickets)?this.tickets:[]).filter(t=>{
+        if(!t||!this.validNumber(t.number)||seen.has(t.number)) return false; seen.add(t.number);
+        return (!this.fTier||t.tier===this.fTier)
+          &&(!this.fStatus||(this.fStatus==='Unprinted'?(!t.printed&&!t.shared):t.status===this.fStatus))
+          &&(!q||(t.number+' '+(t.buyer||'')+' '+(t.code||'')).toLowerCase().includes(q));
+      });
     },
     get statCards(){
       const T=this.tickets, U=T.filter(t=>t.status==='Used');
       const by=k=>`${U.filter(t=>t.tier===k).length}/${T.filter(t=>t.tier===k).length}`;
       return [{l:'Generated',v:T.length},{l:'Scanned',v:U.length},{l:'Unused',v:T.length-U.length},
-        {l:'Ordinary in/total',v:by('Ordinary')},{l:'VIP in/total',v:by('VIP')},{l:'VVIP in/total',v:by('VVIP')}];
+        {l:'GEN IN/TOTAL',v:by('GEN')},{l:'VIP IN/TOTAL',v:by('VIP')},{l:'TABLE IN/TOTAL',v:by('TABLE')}];
     },
 
     /* ---------- design studio ---------- */
-    isText(k){ return k!=='qr'&&k!=='logo'; },
+    isImg(k){ return k==='qr'||k==='logo'; },
+    isText(k){ return !this.isImg(k); },
     get cur(){ return this.selKey?this.tpl.el[this.selKey]:null; },
     get ratio(){ return Math.max(.25,Math.min(4,(this.tpl.aw||1)/(this.tpl.ah||1))); },
     get maxW(){ return 'min(100%,'+(58*this.ratio).toFixed(1)+'vh)'; },
@@ -819,10 +966,10 @@ function app(){
     },
     ticketHTML(t,edit,fx){
       const T=this.tpl, E=T.el, sel=edit?this.selKey:null;
-      const txt={title:T.eventTitle,tier:t.tier,name:t.buyer||'',serial:t.number};
+      const txt={organizer:T.eventOrganizer,title:T.eventTitle,subtitle:T.eventSub,date:T.eventDate,venue:T.eventVenue,tier:this.tierLabel(t.tier),seat:t.tier==='TABLE'&&t.tableId?`TABLE ${t.tableId} · SEAT ${t.seatNo||''}`:'',name:'',serial:t.number,check:t.code?`CHECK ${String(t.code).slice(0,6).toUpperCase()}`:'',contact:T.eventContact,terms:T.eventTerms};
       const shadow=fx&&T.shadow>0?`box-shadow:0 ${T.shadow*.25}px ${T.shadow*.7}px rgba(0,0,0,.45);`:'';
       let h=`<div style="container-type:inline-size;width:100%"><div style="position:relative;aspect-ratio:${this.ratio};overflow:hidden;border-radius:${T.radius}cqw;background-color:${T.bgColor};${shadow}">`;
-      if(T.bg) h+=`<div style="position:absolute;inset:0;background:url(${T.bg}) center/cover;opacity:${T.bgOp};${T.blur?`filter:blur(${T.blur}cqw);transform:scale(1.12);`:''}"></div>`;
+      if(T.bg) h+=`<div style="position:absolute;inset:0;background-image:url(${T.bg});background-size:${T.bgScale*100}%;background-position:${T.bgX}% ${T.bgY}%;background-repeat:no-repeat;opacity:${T.bgOp};${T.blur?`filter:blur(${T.blur}cqw);`:''}z-index:1"></div>`;
       if(T.gType!=='none') h+=`<div style="position:absolute;inset:0;opacity:${T.gOp};background:${T.gType==='linear'?`linear-gradient(${T.gAngle}deg,${T.g1},${T.g2})`:`radial-gradient(circle at 50% 40%,${T.g1},${T.g2})`}"></div>`;
       T.order.forEach((k,i)=>{
         const c=E[k]; if(!c||!c.show) return;
@@ -835,7 +982,7 @@ function app(){
           const ts=c.sh?`0 0 ${c.sh*.5}cqw ${c.shc},0 .2cqw ${c.sh*1.1}cqw ${c.shc}`:'none';
           h+=`<div ${ed}style="${base}transform:${tr};font-size:${c.size}cqw;color:${c.color};font-weight:${c.weight};font-family:${FONTS[c.font]||FONTS.Inter};letter-spacing:${c.ls}em;text-align:${c.align};text-transform:${c.transform};text-shadow:${ts};line-height:1.1;white-space:nowrap">${this.esc(txt[k])}${hd}</div>`;
         }else if(k==='qr'){
-          h+=`<div ${ed}style="${base}width:${c.size}%;aspect-ratio:1"><img draggable="false" alt="QR code" src="${this.qrUrl(`TKT|${t.number}|${t.code}`)}" style="width:100%;height:100%;display:block;background:#fff;padding:1.2cqw;box-sizing:border-box;border-radius:.8cqw;image-rendering:pixelated;pointer-events:none">${hd}</div>`;
+          h+=`<div ${ed}style="${base}width:${c.size}%;aspect-ratio:1"><img draggable="false" alt="QR code" src="${this.qrUrl(t.livePayload||`TKT|${t.number}|${t.code}`)}" style="width:100%;height:100%;display:block;background:#fff;padding:1.2cqw;box-sizing:border-box;border-radius:.8cqw;image-rendering:pixelated;pointer-events:none">${hd}</div>`;
         }else{
           h+=`<div ${ed}style="${base}width:${c.size}%"><img draggable="false" alt="Logo" src="${T.logo}" style="width:100%;display:block;pointer-events:none">${hd}</div>`;
         }
@@ -923,24 +1070,35 @@ function app(){
 
     async generate(){ if(!this.can('tickets')) return;
       const n=Math.max(1,Math.min(5000,parseInt(this.gQty)||1)); this.busy=true;
-      const p={Ordinary:'ORD',VIP:'VIP',VVIP:'VVIP'}[this.gTier];
-      let seq=this.tickets.filter(t=>t.tier===this.gTier).reduce((m,t)=>Math.max(m,parseInt(t.number.split('-')[1])||0),0);
+      const p={GEN:'GEN',VIP:'VIP',TABLE:'TABLE'}[this.gTier];
+      let seq=this.tickets.filter(t=>t.tier===this.gTier).reduce((m,t)=>Math.max(m,parseInt(String(t.number).split('-')[1],10)||0),0);
       if(sb){
-        try{ const r=await sb.rpc('reserve_seq',{p_token:this.user.token,p_tier:this.gTier,p_qty:n}); if(r.error) throw r.error; seq=r.data-1; }
+        try{ const r=await sb.rpc('reserve_seq',{p_token:this.user.token,p_tier:this.gTier,p_qty:n}); if(r.error) throw r.error; seq=this.parseSeq(r.data)-1; }
         catch(e){ this.busy=false; alert('Could not reserve ticket numbers from the cloud. Connect to the internet so numbering stays continuous, then try again.\n\n'+(e.message||'')); return; }
       }
       const fresh=[];
       for(let i=0;i<n;i++){
         const number=`${p}-${String(++seq).padStart(4,'0')}`, salt=this.rnd(12);
-        fresh.push({number,tier:this.gTier,salt,code:await this.makeCode(number,salt),buyer:n===1?this.gName.trim():'',status:'Unused',createdAt:Date.now(),usedAt:null,printed:false,shared:false});
+        fresh.push({number,tier:this.gTier,salt,code:await this.makeCode(number,salt),buyer:n===1?this.gName.trim():'',status:'Unused',createdAt:Date.now(),usedAt:null,printed:false,shared:false,activeToken:'',tokenUpdatedAt:null});
       }
-      this.tickets=[...this.tickets,...fresh]; this.queue({op:'insert',rows:fresh}); this.gName=''; this.busy=false;
+      this.tickets=this.cleanTickets([...this.tickets,...fresh]); this.queue({op:'insert',rows:fresh}); this.gName=''; this.busy=false;
     },
     remove(t){ if(!this.can('backup')) return; if(confirm(`Delete ticket ${t.number}?`)){ this.tickets=this.tickets.filter(x=>x!==t); delete this.sel[t.number]; this.queue({op:'delete',numbers:[t.number]}); } },
-    clearAll(){ if(!this.can('backup')) return; if(confirm('Delete every ticket on this device and in the cloud? This cannot be undone.')){ this.tickets=[]; this.sel={}; this.queue({op:'purge'}); } },
+    async clearAll(){
+  if(!this.can('backup')) return;
+  if(!confirm('Delete every ticket on this device and in the cloud? This cannot be undone.')) return;
+  this.tickets=[]; this.sel={};
+  this.pending=this.pending.filter(o=>o.op!=='insert'&&o.op!=='upsert'&&o.op!=='seed'&&o.op!=='purge'); this.save(PQ,this.pending);
+  if(sb&&navigator.onLine){
+    try{ await this.run({op:'purge'}); this.cloudErr=''; localStorage.setItem(SF,'1'); return; }
+    catch(e){ this.cloudErr=this.errMsg(e); }
+  }
+  this.queue({op:'purge'});
+  },
     resetScans(){ if(!this.can('backup')) return; if(confirm('Mark every ticket as Unused again, on all devices?')){ this.tickets.forEach(t=>{t.status='Unused';t.usedAt=null;}); this.queue({op:'reset'}); } },
 
     printTickets(list){
+      list=list.filter(t=>!t.shared);
       if(!list.length||!this.can('tickets')) return;
       const n=this.perSheet, r=this.ratio, cols=n===4?(r>=1.5?1:2):2, rows=Math.ceil(n/cols), mh=((this.paper==='A4'?255:240)-(rows-1)*4)/rows, mw=(190-(cols-1)*4)/cols, L=[cols,Math.floor(Math.min(mw,mh*r))];
       let h='';
@@ -965,18 +1123,49 @@ function app(){
 
     async onScan(text,manual){
       if(!this.can('gate')||this.locked||!String(text||'').trim()) return;
-      this.locked=true; let t=null;
+      this.locked=true; let t=null, scannedCode='';
+      const raw=String(text).trim();
+      const fields='number, tier, code, salt, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at';
+      const normalizedNumber=value=>{
+        const m=String(value||'').trim().toUpperCase().match(/^(GEN|VIP|TABLE)-?(\d+)$/);
+        return m?`${m[1]}-${m[2].padStart(4,'0')}`:'';
+      };
+      const loadTicket=async(number,token,requireToken)=>{
+        const normalized=normalizedNumber(number);
+        if(!normalized) return null;
+        if(sb&&navigator.onLine){
+          // Fetch by the canonical serial only. Token comparison stays local so malformed QR
+          // payloads can never become PostgREST filters and cause a 400 response.
+          const r=await sb.from('tickets').select(fields).eq('number',normalized).maybeSingle();
+          if(r.error||!r.data) return null;
+          const row=this.fromRow(r.data), expected=String(token||'').trim().toUpperCase();
+          if(requireToken){
+            const current=row.shared?String(row.activeToken||'').trim().toUpperCase():String(row.code||row.salt||'').trim().toUpperCase();
+            if(!expected||!current||expected!==current) return null;
+          }
+          return row;
+        }
+        const row=this.tickets.find(x=>x.number===normalized);
+        if(!row) return null;
+        if(requireToken){
+          const expected=String(token||'').trim().toUpperCase(), current=row.shared?String(row.activeToken||'').trim().toUpperCase():String(row.code||row.salt||'').trim().toUpperCase();
+          if(!expected||!current||expected!==current) return null;
+        }
+        return row;
+      };
       if(manual){
-        const m=String(text).trim().toUpperCase().match(/^(ORD|VIP|VVIP)-?(\d+)$/);
-        if(m) t=this.tickets.find(x=>x.number===`${m[1]}-${m[2].padStart(4,'0')}`);
+        const number=normalizedNumber(raw);
+        t=await loadTicket(number,'',false);
       }else{
-        const [tag,num,code]=String(text).trim().split('|');
-        if(tag==='TKT') t=this.tickets.find(x=>x.number===num&&x.code===code);
+        const parts=raw.split('|'), tag=parts[0], num=parts[1], code=parts.slice(2).join('|');
+        if(tag==='TKT'){
+          scannedCode=String(code||'').trim().toUpperCase();
+          t=await loadTicket(num,scannedCode,true);
+        }
       }
-      if(t&&(await this.makeCode(t.number,t.salt))!==t.code) t=null;
-      if(!t) this.result={ok:false,title:'INVALID TICKET',detail:'NOT FOUND IN DATABASE'};
-      else if(t.status==='Used') this.result={ok:false,title:'DUPLICATE TICKET',detail:'ALREADY SCANNED AT '+this.fmt(t.usedAt),t};
-      else{ const ok=await this.claim(t); this.result=ok?{ok:true,title:'VALID TICKET',detail:'Entry allowed',t:{...t}}:{ok:false,title:'DUPLICATE TICKET',detail:'ALREADY SCANNED AT '+this.fmt(t.usedAt),t}; }
+      if(!t) this.result={ok:false,title:'INVALID / EXPIRED TICKET',detail:'ACCESS DENIED — QR CODE IS INVALID OR EXPIRED'};
+      else if(t.status==='Used') this.result={ok:false,title:'TICKET ALREADY USED',detail:'ALREADY SCANNED AT '+this.fmt(t.usedAt),t};
+      else{ const ok=await this.claim(t); this.result=ok?{ok:true,title:'VALID TICKET - ENTRY ALLOWED',detail:t.printed?'ENTRY ALLOWED · ALREADY PRINTED — DO NOT PRINT A DUPLICATE':'ENTRY ALLOWED',t:{...t}}:{ok:false,title:'TICKET ALREADY USED',detail:'ALREADY SCANNED AT '+this.fmt(t.usedAt),t}; }
       this.beep(this.result.ok);
       if(navigator.vibrate) navigator.vibrate(this.result.ok?120:[200,100,200]);
     },
@@ -995,13 +1184,15 @@ function app(){
     /* ---------- roles & cloud sync (Supabase) ---------- */
     get tabs(){
       const L={design:'Design',tickets:'Tickets',gate:'Gate',backup:'Backup'};
-      return ({admin:['design','tickets','gate','backup'],producer:['design','tickets'],gatekeeper:['gate']}[this.role]||[]).map(k=>[k,L[k]]);
+      return ({admin:['design','tickets','gate','backup'],producer:['tickets'],gatekeeper:['gate']}[this.role]||[]).map(k=>[k,L[k]]);
     },
     can(k){ return this.tabs.some(x=>x[0]===k); },
+    setTab(k){ if(this.can(k)) this.tab=k; },
     get roleLabel(){ return ({admin:'Super Admin',producer:'Producer',gatekeeper:'Gatekeeper'}[this.role]||''); },
     get cloudLabel(){ const n=this.pending.length; return this.cloud==='live'?'Live sync':this.cloud==='sync'?'Syncing…':'Offline'+(n?` · ${n} queued`:''); },
-    toRow(t){ return {number:t.number,tier:t.tier,code:t.code,salt:t.salt,buyer:t.buyer||'',status:t.status,created_at:t.createdAt,used_at:t.usedAt??null,printed:!!t.printed,shared:!!t.shared}; },
-    fromRow(r){ return {number:r.number,tier:r.tier,code:r.code,salt:r.salt,buyer:r.buyer||'',status:r.status,createdAt:Number(r.created_at),usedAt:r.used_at==null?null:Number(r.used_at),printed:!!r.printed,shared:!!r.shared}; },
+    toRow(t){ return {number:t.number,tier:t.tier,code:t.code,salt:t.salt,buyer:t.buyer||'',status:t.status,created_at:t.createdAt,used_at:t.usedAt??null,printed:!!t.printed,shared:!!t.shared,active_token:t.activeToken||null,token_updated_at:t.tokenUpdatedAt||null}; },
+    fromRow(r){ return {number:r.number,tier:r.tier,code:r.code,salt:r.salt,buyer:r.buyer||'',status:r.status,createdAt:Number(r.created_at),usedAt:r.used_at==null?null:Number(r.used_at),printed:!!r.printed,shared:!!r.shared,activeToken:r.active_token||'',tokenUpdatedAt:r.token_updated_at||null}; },
+    get shareCount(){ return this.tickets.filter(t=>this.sel[t.number]&&!t.shared&&t.status==='Unused').length; },
     errMsg(e){ return e.code==='PGRST205'||/does not exist|schema cache/i.test(e.message||'')?'Cloud table not found. Run the setup SQL in your Supabase project.':(e.message||'Sync failed'); },
 
     queue(o){ this.pending.push(o); this.save(PQ,this.pending); this.flush(); },
@@ -1026,14 +1217,14 @@ function app(){
       else if(o.op==='patch') ck(await t.update({buyer:o.buyer}).eq('number',o.number));
       else if(o.op==='claim') ck(await t.update({status:'Used',used_at:o.usedAt}).eq('number',o.number).eq('status','Unused'));
       else if(o.op==='printed') for(const c of ch(o.numbers,100)) ck(await t.update({printed:true}).in('number',c));
-      else if(o.op==='delete') for(const c of ch(o.numbers,100)) ck(await t.delete().in('number',c));
+      else if(o.op==='delete') for(const c of ch(o.numbers,100)) ck(await sb.rpc('delete_tickets',{p_token:this.user.token,p_numbers:c}));
       else if(o.op==='reset') ck(await t.update({status:'Unused',used_at:null}).neq('status','Unused'));
       else if(o.op==='purge') ck(await sb.rpc('purge_tickets',{p_token:this.user.token}));
-      else if(o.op==='insert') for(const c of ch(o.rows,500)) ck(await t.insert(c.map(r=>this.toRow(r))));
-      else if(o.op==='shared') for(const c of ch(o.numbers,100)) ck(await t.update({shared:true}).in('number',c));
+      else if(o.op==='insert') for(const c of ch(o.rows,500)) ck(await t.upsert(c.map(r=>this.toRow(r)),{onConflict:'number',ignoreDuplicates:true}));
+      else if(o.op==='shared') for(const c of ch(o.tokens||[],100)) for(const row of c) ck(await t.update({shared:true,active_token:row.activeToken,token_updated_at:row.tokenUpdatedAt,printed:false}).eq('number',row.number).eq('status','Unused'));
     },
     patchTicket(t){ this.queue({op:'patch',number:t.number,buyer:t.buyer||''}); },
-    applyRemote(r){ const n=this.fromRow(r), l=this.tickets.find(x=>x.number===n.number); if(l) Object.assign(l,n); else this.tickets.push(n); },
+    applyRemote(r){ if(!r||!this.validNumber(r.number)) return; const n=this.fromRow(r), l=this.tickets.find(x=>x.number===n.number); if(l) Object.assign(l,n); else this.tickets.push(n); },
     onRemote(p){
       if(p.eventType==='DELETE') this.tickets=this.tickets.filter(x=>x.number!==p.old.number);
       else if(p.new) this.applyRemote(p.new);
@@ -1052,7 +1243,7 @@ function app(){
         }
         const mine=all.map(r=>this.fromRow(r));
         if(!localStorage.getItem(SF)){ const have=new Set(all.map(r=>r.number)); this.tickets.forEach(t=>{ if(!have.has(t.number)) mine.push(t); }); }
-        this.tickets=mine;
+        this.tickets=this.cleanTickets(mine);
         if(!this.cloudErr) localStorage.setItem(SF,'1');
         this.cloud='live'; this.loadStaff(); this.syncDesign();
       }catch(e){ this.cloud='offline'; if(e&&e.code) this.cloudErr=this.errMsg(e); }
@@ -1065,8 +1256,7 @@ function app(){
       this.syncNow();
       
       try {
-        // Use a completely unique channel name every time to avoid SDK cache collisions
-        const channelName = 'live_sync_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+        const channelName = 'table-db-changes';
         
         sb.channel(channelName)
           .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets' }, p => this.onRemote(p))
@@ -1175,6 +1365,7 @@ function app(){
       return b.split('#')[0].split('?')[0]+`#/t/${t.number}.${t.code}`;
     },
     async shareTicket(t){
+      if(t.shared||t.status!=='Unused') return;
       const u=this.link(t); if(!u) return;
       const text=`Your ${t.tier} ticket${t.buyer?' for '+t.buyer:''} (${t.number}). Show this QR code at the gate: `;
       try{
@@ -1183,21 +1374,97 @@ function app(){
         this.markShared(t);
       }catch(e){}
     },
+    async shareSelected(){
+      const chosen=this.tickets.filter(t=>this.sel[t.number]&&!t.shared&&t.status==='Unused');
+      if(!chosen.length) return;
+      if(chosen.length>8){ alert('You can share a maximum of 8 tickets at once.'); return; }
+      chosen.forEach(t=>this.markShared(t));
+      const links=chosen.map(t=>`${t.number}: ${this.link(t)}`).join('\n');
+      try{ if(navigator.share) await navigator.share({title:`${chosen.length} digital tickets`,text:'Digital tickets\n'+links}); else await navigator.clipboard.writeText(links); }
+      catch(e){ try{ await navigator.clipboard.writeText(links); }catch(_){} }
+      chosen.forEach(t=>delete this.sel[t.number]);
+    },
     async copyLink(t){
       const u=this.link(t); if(!u) return;
       try{ await navigator.clipboard.writeText(u); }catch(e){ prompt('Copy this ticket link:',u); }
       this.markShared(t);
     },
-    markShared(t){ if(!t.shared){ t.shared=true; this.queue({op:'shared',numbers:[t.number]}); } },
+    markShared(t){
+      if(t.shared||t.status!=='Unused') return;
+      t.shared=true; t.activeToken=this.rnd(24); t.tokenUpdatedAt=new Date().toISOString();
+      this.queue({op:'shared',numbers:[t.number],tokens:[{number:t.number,activeToken:t.activeToken,tokenUpdatedAt:t.tokenUpdatedAt}]});
+    },
+    get requestPrice(){ return this.requestTiers.find(x=>x.name===this.requestTier)?.price||0; },
+    formatUgx(value){ return new Intl.NumberFormat('en-UG',{style:'currency',currency:'UGX',maximumFractionDigits:0}).format(value||0); },
+    ticketHref(t){ return '#/t/'+encodeURIComponent(t.number+'.'+t.code); },
+    async submitRequest(){
+      this.requestMessage=''; this.requestTicket=null;
+      if(!sb||!navigator.onLine){ this.requestOk=false; this.requestMessage='A live internet connection is required to complete a ticket request.'; return; }
+      const f=this.requestForm;
+      if(f.payment==='Mobile Money'&&!f.paymentPhone){ this.requestOk=false; this.requestMessage='Enter the Mobile Money number used for payment.'; return; }
+      if(f.payment==='Card'&&(!f.cardNumber||!f.expiry||!f.cvv)){ this.requestOk=false; this.requestMessage='Complete the card simulation fields to continue.'; return; }
+      this.requestBusy=true;
+      try{
+        const buyer=`${f.name} | ${f.phone} | ${f.email} | ${f.payment}`;
+        const created=await sb.rpc('request_ticket',{p_tier:this.requestTier,p_buyer:buyer});
+        if(created.error) throw created.error; if(!created.data) throw new Error('empty');
+        const number=created.data.number;
+        this.requestTicket=created.data; this.requestOk=true; this.requestMessage=`Payment received: ${this.formatUgx(this.requestPrice)}. Ticket ${number} was created.`;
+      }catch(e){ this.requestOk=false; this.requestMessage='The ticket could not be created. Please try again.'; }
+      this.requestBusy=false;
+    },
     async guestInit(){
       if(!sb){ this.gErr='Could not load this ticket. Check your connection.'; return; }
       try{
-        const [t,d]=await Promise.all([sb.rpc('digital_ticket',{p_number:this.guest.number.toUpperCase(),p_code:this.guest.code.toUpperCase()}),sb.rpc('public_design')]);
-        if(t.error) throw t.error;
-        if(!t.data){ this.gErr='This ticket link is not valid.'; return; }
-        if(d.data) this.tpl=this.mergeTpl(d.data);
-        this.gt={...t.data,buyer:t.data.buyer||''};
-      }catch(e){ this.gErr='Could not load this ticket. Check your connection and try again.'; }
+        this.gDevice=localStorage.getItem('gatekeeper.device.v1')||((crypto.randomUUID?crypto.randomUUID():this.rnd(24)));
+        localStorage.setItem('gatekeeper.device.v1',this.gDevice);
+        try{
+          const d=await Promise.race([sb.rpc('public_design'),new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout')),5000))]);
+          if(!d.error&&d.data) this.tpl=this.mergeTpl(d.data);
+        }catch(e){}
+        await this.refreshLiveTicket();
+        this.gRefreshTimer=setInterval(()=>this.refreshLiveTicket(),30000);
+        this.gOnline=navigator.onLine;
+        window.addEventListener('online',()=>{this.gOnline=true;this.refreshLiveTicket();});
+        window.addEventListener('offline',()=>{this.gOnline=false;});
+        document.addEventListener('visibilitychange',()=>{if(!document.hidden)this.refreshLiveTicket();});
+      }catch(e){
+        if(!this.gt) this.gErr='Ticket Not Found. Check the link and try again.';
+      }
+    },
+    async refreshLiveTicket(){
+      if(!sb||!this.guest||!navigator.onLine) return;
+      try{
+        const number=String(this.guest.number||'').trim().toUpperCase();
+        const r=await Promise.race([
+          sb.from('tickets').select('number, tier, code, buyer, status, created_at, used_at, printed, shared').eq('number',number).maybeSingle(),
+          new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout')),5000))
+        ]);
+        if(r.error) throw r.error;
+        if(!r.data){
+          if(!this.gt) this.gErr='Ticket Not Found. Check the link and try again.';
+          return;
+        }
+        // The number is authoritative. The URL suffix is only a compatibility hint;
+        // stale or differently-cased suffixes must never make an existing ticket disappear.
+        this.gt=this.fromRow(r.data); this.gState=this.gt.status==='Used'?'USED':'OK'; this.gErr='';
+        this.gPayload=`TKT|${this.gt.number}|${this.gt.code}`;
+        this.gTtl=30; this.gSeconds=this.gTtl; this.gTtlPercent=100;
+        clearInterval(this.gTimer); this.gTimer=setInterval(()=>{this.gSeconds=Math.max(0,this.gSeconds-1);this.gTtlPercent=this.gTtl?this.gSeconds/this.gTtl*100:0;},1000);
+      }catch(e){
+        this.gOnline=navigator.onLine;
+        if(!this.gt) this.gErr=/timeout|network|fetch|lookup/i.test(e.message||'')?'Could not load this ticket. Check your connection and try again.':'Could not load this ticket. Check your connection and try again.';
+      }
+    },
+
+    async rotateGuestToken(){
+      if(!sb||!this.gt||!this.gt.shared||this.gt.status==='Used'||!navigator.onLine) return;
+      const activeToken=this.rnd(24), tokenUpdatedAt=new Date().toISOString();
+      try{
+        const r=await sb.from('tickets').update({active_token:activeToken,token_updated_at:tokenUpdatedAt}).eq('number',this.gt.number).eq('shared',true).eq('status','Unused').select('number, tier, code, salt, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at').maybeSingle();
+        if(r.error||!r.data) return;
+        this.gt=this.fromRow(r.data); this.gPayload=`TKT|${this.gt.number}|${this.gt.activeToken}`;
+      }catch(e){}
     },
 
     designChanged(){
@@ -1242,17 +1509,17 @@ function app(){
       const f=e.target.files[0]; if(!f) return;
       try{
         const d=JSON.parse(await f.text());
-        const ok=t=>t&&typeof t.number==='string'&&['Ordinary','VIP','VVIP'].includes(t.tier)&&t.code&&t.salt;
+        const ok=t=>t&&typeof t.number==='string'&&['GEN','VIP','TABLE'].includes(t.tier)&&t.code&&t.salt;
         if(!Array.isArray(d.tickets)||!d.tickets.every(ok)) throw new Error('bad');
         const inc=d.tickets.map(t=>({buyer:'',status:'Unused',createdAt:Date.now(),usedAt:null,printed:false,...t}));
-        if(this.impMode==='replace') this.tickets=inc;
+        if(this.impMode==='replace') this.tickets=this.cleanTickets(inc);
         else{
           const map=new Map(this.tickets.map(t=>[t.number,t])), add=[];
           inc.forEach(t=>{ const l=map.get(t.number);
             if(!l) add.push(t);
             else{ if(t.status==='Used'&&(l.status!=='Used'||t.usedAt<l.usedAt)){ l.status='Used'; l.usedAt=t.usedAt; }
               l.printed=l.printed||t.printed; if(!l.buyer) l.buyer=t.buyer; } });
-          this.tickets=[...this.tickets,...add];
+          this.tickets=this.cleanTickets([...this.tickets,...add]);
         }
         if(this.impDesign&&d.template) this.tpl=this.mergeTpl(d.template);
         if(this.impMode==='replace') this.queue({op:'purge'}); this.queue({op:'upsert',rows:this.tickets.map(t=>({...t}))});
