@@ -1364,7 +1364,7 @@ function app(){
         this.gTechnical=e?.status?`HTTP ${e.status}`:e?.code||e?.message||'Network error';
         if(this.guestPermanentError(e)){ this.stopGuestRefresh(); this.gPermanent=true; this.gPayload=''; this.gState='ERROR'; this.gErr='Database setup incomplete. Ask the organisers to finish the ticket setup.'; return; }
         this.gRetryIndex=Math.min(this.gRetryIndex+1,4); const delay=[3000,6000,12000,20000][this.gRetryIndex-1]||20000;
-        if(this.gSeconds<=0){this.gPayload='';this.gErr='No connection - reconnect to show your ticket';}
+        if(!this.gLastRefreshAt||Date.now()-this.gLastRefreshAt>=18000){this.gPayload='';this.gErr='No connection - reconnect to show your ticket';}
         this.stopGuestRefresh(); this.scheduleGuestRefresh(delay);
       }
     },
