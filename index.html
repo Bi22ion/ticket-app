@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kivvulu — Ticket Studio</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%9F%EF%B8%8F%3C/text%3E%3C/svg%3E">
+<script>(function(w){var o=console.warn;console.warn=function(){if(String(arguments[0]||'').indexOf('cdn.tailwindcss.com should not be used in production')>-1)return;return o.apply(console,arguments);};})(window);</script>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
@@ -343,7 +345,8 @@
           <option value="letter">US Letter</option>
         </select>
       </label>
-      <button class="btn-dark py-2.5 px-5 font-medium shadow-sm" @click="printTickets(tickets.filter(t=>sel[t.number]))" x-text="`Print ${selCount} selected (${Math.ceil(selCount/perSheet)} sheets)`" :disabled="!selCount"></button>
+      <button class="btn-dark py-2.5 px-5 font-medium shadow-sm" @click="printTickets(tickets.filter(t=>sel[t.number]&&!t.shared))" x-text="`Print ${selCount} selected (${Math.ceil(selCount/perSheet)} sheets)`" :disabled="!selCount"></button>
+      <button class="btn bg-sky-600 hover:bg-sky-700 text-white font-medium py-2.5 px-5 shadow-sm border-sky-600" @click="shareSelected()" :disabled="!shareCount" x-text="shareCount?`Share Selected (${shareCount}/8)`:'Share Selected'"></button>
       <span class="text-xs text-stone-400 italic ml-auto">Tip: Choose "Save as PDF" in your system print dialog to export a clean file.</span>
     </div>
   </div>
@@ -472,7 +475,7 @@
 -- 0. CLEANUP: drop EVERY overloaded copy of the app functions so PostgREST can never be ambiguous
 do $$ declare r record; begin
   for r in select p.oid::regprocedure as sig from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-    where n.nspname = 'public' and p.proname in ('reserve_seq','purge_tickets','delete_tickets','digital_ticket','ticket_live','request_ticket','public_design','save_design','app_login','app_whoami','app_logout','staff_create','staff_delete','staff_password','_admin','_staff')
+    where n.nspname = 'public' and p.proname in ('reserve_seq','purge_tickets','delete_tickets','digital_ticket','ticket_live','ticket_heartbeat','request_ticket','public_design','save_design','app_login','app_whoami','app_logout','staff_create','staff_delete','staff_password','_admin','_staff')
   loop execute 'drop function if exists ' || r.sig || ' cascade'; end loop;
 end $$;
 
@@ -512,6 +515,13 @@ create policy "anon update" on public.tickets for update to anon using (true) wi
 
 create table if not exists public.ticket_counters (tier text primary key, last int not null default 0);
 alter table public.ticket_counters enable row level security;
+
+-- heartbeat table: kept separate from tickets so heartbeats never flood realtime. No policies = only the functions below can touch it.
+create table if not exists public.ticket_heartbeats (
+  number text primary key references public.tickets(number) on delete cascade,
+  last_seen timestamptz not null default now()
+);
+alter table public.ticket_heartbeats enable row level security;
 
 -- staff accounts: passwords are stored only as bcrypt hashes in a table anon cannot read
 create table if not exists public.users (
@@ -611,11 +621,35 @@ begin
   select row_to_json(t) into r from (select number, tier, code, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at from tickets where number = num) t;
   return r;
 end $$;
--- live gate check for a ticket link (2 arguments, trimmed and upper-cased)
-create or replace function public.ticket_live(p_number text, p_code text) returns json language sql security definer set search_path = public as $$
-  select json_build_object('valid', t.status = 'Unused', 'status', t.status, 'number', t.number, 'tier', t.tier, 'buyer', t.buyer, 'used_at', t.used_at)
-  from tickets t where t.number = upper(trim(p_number))
-   and (nullif(trim(p_code), '') is null or upper(coalesce(t.active_token,'')) = upper(trim(p_code)) or upper(coalesce(t.salt,'')) = upper(trim(p_code)) or upper(coalesce(t.code,'')) = upper(trim(p_code))) $$;
+-- live gate check. Digital (shared) tickets must have a heartbeat within the last 45 seconds; paper tickets skip that rule.
+create or replace function public.ticket_live(p_number text, p_code text) returns json language plpgsql security definer set search_path = public as $$
+declare v record; v_ttl int := 45; v_age numeric;
+begin
+  select t.* into v from tickets t where t.number = upper(trim(p_number))
+    and (nullif(trim(p_code), '') is null or upper(coalesce(t.active_token,'')) = upper(trim(p_code)) or upper(coalesce(t.salt,'')) = upper(trim(p_code)) or upper(coalesce(t.code,'')) = upper(trim(p_code)));
+  if not found then return json_build_object('success', false, 'message', 'Ticket Not Found'); end if;
+  if v.status = 'Used' then return json_build_object('success', false, 'message', 'Ticket Already Used', 'number', v.number, 'status', v.status, 'used_at', v.used_at); end if;
+  if v.shared then
+    select extract(epoch from (now() - h.last_seen)) into v_age from ticket_heartbeats h where h.number = v.number;
+    if v_age is null or v_age &gt; v_ttl then
+      return json_build_object('success', false, 'stale', true, 'message', 'Ticket Expired / Inactive Session', 'number', v.number);
+    end if;
+  end if;
+  return json_build_object('success', true, 'valid', true, 'number', v.number, 'tier', v.tier, 'buyer', v.buyer, 'status', v.status, 'shared', v.shared, 'used_at', v.used_at, 'heartbeat_age', v_age);
+end $$;
+-- called every 20s by an open digital ticket page
+create or replace function public.ticket_heartbeat(p_number text, p_code text) returns json language plpgsql security definer set search_path = public as $$
+declare v record;
+begin
+  if nullif(trim(p_code), '') is null then return json_build_object('ok', false); end if;
+  select t.number, t.status into v from tickets t where t.number = upper(trim(p_number))
+    and (upper(coalesce(t.active_token,'')) = upper(trim(p_code)) or upper(coalesce(t.salt,'')) = upper(trim(p_code)) or upper(coalesce(t.code,'')) = upper(trim(p_code)));
+  if not found then return json_build_object('ok', false); end if;
+  if v.status = 'Unused' then
+    insert into ticket_heartbeats (number, last_seen) values (v.number, now()) on conflict (number) do update set last_seen = now();
+  end if;
+  return json_build_object('ok', v.status = 'Unused', 'status', v.status);
+end $$;
 create or replace function public.purge_tickets(p_token text) returns void language plpgsql security definer set search_path = public as $$
 begin
   if not _admin(p_token) then raise exception 'Not allowed'; end if;
@@ -883,7 +917,7 @@ function app(){
   return {
     tab:SESS?(SESS.role==='gatekeeper'?'gate':SESS.role==='producer'?'tickets':'design'):'design', user:SESS, guest:GUEST, request:REQUEST, gt:null, gErr:'', requestTiers:[{name:'GEN',price:50000},{name:'VIP',price:100000},{name:'TABLE',price:3000000}], requestTier:'GEN', requestForm:{name:'',phone:'',email:'',payment:'Mobile Money',paymentPhone:'',cardNumber:'',expiry:'',cvv:''}, requestBusy:false, requestMessage:'', requestOk:false, requestTicket:null, lu:'', lp:'', showPw:false, loginErr:'', loginBusy:false, staff:[], nu:'', np:'', nr:'gatekeeper', staffMsg:'', staffOk:true, appUrl:localStorage.getItem(AU)||'', cloud:'offline', cloudErr:'', pending:[], syncing:false, flushing:false, tickets:[], tpl:defaultTpl(), pTier:'VIP', pName:'Amina Nakato', dTab:'canvas', selKey:'title', view:'edit', guides:null, tilt:{rx:0,ry:0,gx:50,gy:50}, presets:PRESETS, fonts:FONTS,
     gTier:'GEN', gQty:10, gName:'', busy:false, q:'', fTier:'', fStatus:'', sel:{},
-  gState:'', gPayload:'', gSeconds:0, gTtlPercent:0, gOnline:true, gDevice:'', gTtl:30, gTimer:null, gRefreshTimer:null, gTokenTimer:null,
+  gState:'', gPayload:'', gSeconds:0, gTtlPercent:0, gOnline:true, gDevice:'', gTtl:30, gTimer:null, gHeartTimer:null, gRefreshTimer:null, gTokenTimer:null,
     perSheet:6, paper:'A4', printHTML:'', drag:null,
     scanner:null, camError:'', result:null, locked:false, man:'',
     impMode:'merge', impDesign:true, msg:'', msgOk:true,
@@ -934,7 +968,7 @@ function app(){
       return n;
     },
     get sample(){ return {number:{GEN:'GEN',VIP:'VIP',TABLE:'TABLE'}[this.pTier]+'-0001',tier:this.pTier,buyer:this.pName,code:'SAMPLE000000'}; },
-    get selCount(){ return this.tickets.filter(t=>this.sel[t.number]).length; },
+    get selCount(){ return this.tickets.filter(t=>this.sel[t.number]&&!t.shared).length; },
     get filtered(){
       const q=String(this.q||'').trim().toLowerCase(), seen=new Set();
       return (Array.isArray(this.tickets)?this.tickets:[]).filter(t=>{
@@ -1123,7 +1157,7 @@ function app(){
 
     async onScan(text,manual){
       if(!this.can('gate')||this.locked||!String(text||'').trim()) return;
-      this.locked=true; let t=null, scannedCode='';
+      this.locked=true; let t=null, scannedCode='', denied='';
       const raw=String(text).trim();
       const fields='number, tier, code, salt, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at';
       const normalizedNumber=value=>{
@@ -1142,6 +1176,12 @@ function app(){
           if(requireToken){
             const current=row.shared?String(row.activeToken||'').trim().toUpperCase():String(row.code||row.salt||'').trim().toUpperCase();
             if(!expected||!current||expected!==current) return null;
+          }
+          if(row.shared&&row.status!=='Used'&&requireToken){
+            try{
+              const lv=await sb.rpc('ticket_live',{p_number:normalized,p_code:expected});
+              if(!lv.error&&lv.data&&lv.data.success===false){ denied=lv.data.message||''; return null; }
+            }catch(e){}
           }
           return row;
         }
@@ -1163,7 +1203,7 @@ function app(){
           t=await loadTicket(num,scannedCode,true);
         }
       }
-      if(!t) this.result={ok:false,title:'INVALID / EXPIRED TICKET',detail:'ACCESS DENIED — QR CODE IS INVALID OR EXPIRED'};
+      if(!t) this.result={ok:false,title:denied?denied.toUpperCase():'INVALID / EXPIRED TICKET',detail:denied?'ACCESS DENIED — NO LIVE TICKET PAGE DETECTED (SCREENSHOT OR CLOSED TAB)':'ACCESS DENIED — QR CODE IS INVALID OR EXPIRED'};
       else if(t.status==='Used') this.result={ok:false,title:'TICKET ALREADY USED',detail:'ALREADY SCANNED AT '+this.fmt(t.usedAt),t};
       else{ const ok=await this.claim(t); this.result=ok?{ok:true,title:'VALID TICKET - ENTRY ALLOWED',detail:t.printed?'ENTRY ALLOWED · ALREADY PRINTED — DO NOT PRINT A DUPLICATE':'ENTRY ALLOWED',t:{...t}}:{ok:false,title:'TICKET ALREADY USED',detail:'ALREADY SCANNED AT '+this.fmt(t.usedAt),t}; }
       this.beep(this.result.ok);
@@ -1192,7 +1232,7 @@ function app(){
     get cloudLabel(){ const n=this.pending.length; return this.cloud==='live'?'Live sync':this.cloud==='sync'?'Syncing…':'Offline'+(n?` · ${n} queued`:''); },
     toRow(t){ return {number:t.number,tier:t.tier,code:t.code,salt:t.salt,buyer:t.buyer||'',status:t.status,created_at:t.createdAt,used_at:t.usedAt??null,printed:!!t.printed,shared:!!t.shared,active_token:t.activeToken||null,token_updated_at:t.tokenUpdatedAt||null}; },
     fromRow(r){ return {number:r.number,tier:r.tier,code:r.code,salt:r.salt,buyer:r.buyer||'',status:r.status,createdAt:Number(r.created_at),usedAt:r.used_at==null?null:Number(r.used_at),printed:!!r.printed,shared:!!r.shared,activeToken:r.active_token||'',tokenUpdatedAt:r.token_updated_at||null}; },
-    get shareCount(){ return this.tickets.filter(t=>this.sel[t.number]&&!t.shared&&t.status==='Unused').length; },
+    get shareCount(){ return this.tickets.filter(t=>this.sel[t.number]&&!t.shared&&!t.printed&&t.status==='Unused').length; },
     errMsg(e){ return e.code==='PGRST205'||/does not exist|schema cache/i.test(e.message||'')?'Cloud table not found. Run the setup SQL in your Supabase project.':(e.message||'Sync failed'); },
 
     queue(o){ this.pending.push(o); this.save(PQ,this.pending); this.flush(); },
@@ -1366,6 +1406,7 @@ function app(){
     },
     async shareTicket(t){
       if(t.shared||t.status!=='Unused') return;
+      if(t.printed&&!confirm(t.number+' was already printed. Sharing it digitally creates a second usable copy. Share anyway?')) return;
       const u=this.link(t); if(!u) return;
       const text=`Your ${t.tier} ticket${t.buyer?' for '+t.buyer:''} (${t.number}). Show this QR code at the gate: `;
       try{
@@ -1375,7 +1416,8 @@ function app(){
       }catch(e){}
     },
     async shareSelected(){
-      const chosen=this.tickets.filter(t=>this.sel[t.number]&&!t.shared&&t.status==='Unused');
+      const picked=this.tickets.filter(t=>this.sel[t.number]&&!t.shared&&t.status==='Unused'), chosen=picked.filter(t=>!t.printed);
+      if(picked.length>chosen.length) alert((picked.length-chosen.length)+' selected ticket(s) were already printed and were skipped, so no ticket exists in both paper and digital form.');
       if(!chosen.length) return;
       if(chosen.length>8){ alert('You can share a maximum of 8 tickets at once.'); return; }
       chosen.forEach(t=>this.markShared(t));
@@ -1385,13 +1427,14 @@ function app(){
       chosen.forEach(t=>delete this.sel[t.number]);
     },
     async copyLink(t){
+      if(!t.shared&&t.printed&&!confirm(t.number+' was already printed. Copying a digital link creates a second usable copy. Continue?')) return;
       const u=this.link(t); if(!u) return;
       try{ await navigator.clipboard.writeText(u); }catch(e){ prompt('Copy this ticket link:',u); }
       this.markShared(t);
     },
     markShared(t){
       if(t.shared||t.status!=='Unused') return;
-      t.shared=true; t.activeToken=this.rnd(24); t.tokenUpdatedAt=new Date().toISOString();
+      t.shared=true; delete this.sel[t.number]; t.activeToken=this.rnd(24); t.tokenUpdatedAt=new Date().toISOString();
       this.queue({op:'shared',numbers:[t.number],tokens:[{number:t.number,activeToken:t.activeToken,tokenUpdatedAt:t.tokenUpdatedAt}]});
     },
     get requestPrice(){ return this.requestTiers.find(x=>x.name===this.requestTier)?.price||0; },
@@ -1423,11 +1466,12 @@ function app(){
           if(!d.error&&d.data) this.tpl=this.mergeTpl(d.data);
         }catch(e){}
         await this.refreshLiveTicket();
+        this.sendHeartbeat(); this.gHeartTimer=setInterval(()=>this.sendHeartbeat(),20000);
         this.gRefreshTimer=setInterval(()=>this.refreshLiveTicket(),30000);
         this.gOnline=navigator.onLine;
         window.addEventListener('online',()=>{this.gOnline=true;this.refreshLiveTicket();});
         window.addEventListener('offline',()=>{this.gOnline=false;});
-        document.addEventListener('visibilitychange',()=>{if(!document.hidden)this.refreshLiveTicket();});
+        document.addEventListener('visibilitychange',()=>{if(!document.hidden){this.refreshLiveTicket();this.sendHeartbeat();}});
       }catch(e){
         if(!this.gt) this.gErr='Ticket Not Found. Check the link and try again.';
       }
@@ -1437,7 +1481,7 @@ function app(){
       try{
         const number=String(this.guest.number||'').trim().toUpperCase();
         const r=await Promise.race([
-          sb.from('tickets').select('number, tier, code, buyer, status, created_at, used_at, printed, shared').eq('number',number).maybeSingle(),
+          sb.from('tickets').select('number, tier, code, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at').eq('number',number).maybeSingle(),
           new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout')),5000))
         ]);
         if(r.error) throw r.error;
@@ -1448,7 +1492,7 @@ function app(){
         // The number is authoritative. The URL suffix is only a compatibility hint;
         // stale or differently-cased suffixes must never make an existing ticket disappear.
         this.gt=this.fromRow(r.data); this.gState=this.gt.status==='Used'?'USED':'OK'; this.gErr='';
-        this.gPayload=`TKT|${this.gt.number}|${this.gt.code}`;
+        this.gPayload=`TKT|${this.gt.number}|${this.gt.shared&&this.gt.activeToken?this.gt.activeToken:this.gt.code}`;
         this.gTtl=30; this.gSeconds=this.gTtl; this.gTtlPercent=100;
         clearInterval(this.gTimer); this.gTimer=setInterval(()=>{this.gSeconds=Math.max(0,this.gSeconds-1);this.gTtlPercent=this.gTtl?this.gSeconds/this.gTtl*100:0;},1000);
       }catch(e){
@@ -1457,6 +1501,14 @@ function app(){
       }
     },
 
+    /* heartbeat: proves a live page is open. A screenshot is frozen and cannot send it. */
+    async sendHeartbeat(){
+      if(!sb||!this.guest||!this.gt||!navigator.onLine||this.gt.status==='Used') return;
+      try{
+        const r=await sb.rpc('ticket_heartbeat',{p_number:this.guest.number,p_code:this.guest.code||this.gt.code});
+        if(!r.error&&r.data&&r.data.status==='Used'){ this.gt.status='Used'; this.gState='USED'; }
+      }catch(e){}
+    },
     async rotateGuestToken(){
       if(!sb||!this.gt||!this.gt.shared||this.gt.status==='Used'||!navigator.onLine) return;
       const activeToken=this.rnd(24), tokenUpdatedAt=new Date().toISOString();
