@@ -573,8 +573,8 @@ begin
 end $$;
 
 -- digital ticket pages (guests, no login) and shared ticket design
-create or replace function public.digital_ticket(p_number text, p_code text) returns json language sql security definer set search_path = public as $$
-  select row_to_json(t) from (select number, tier, buyer, code, status from tickets where number = p_number and code = p_code) t $$;
+  create or replace function public.digital_ticket(p_number text, p_code text) returns json language sql security definer set search_path = public as $$
+  select row_to_json(t) from (select number, tier, code, buyer, status, created_at, used_at, printed, shared, active_token, salt, token_updated_at from tickets where number = upper(trim(p_number)) and (nullif(trim(p_code), '') is null or upper(coalesce(active_token, '')) = upper(trim(p_code)) or upper(coalesce(salt, '')) = upper(trim(p_code)) or upper(coalesce(code, '')) = upper(trim(p_code)))) t $$;
 create or replace function public.public_design() returns jsonb language sql security definer set search_path = public as $$
   select value from settings where key = 'design' $$;
 create or replace function public.save_design(p_token text, p_design jsonb) returns void language plpgsql security definer set search_path = public as $$
@@ -1011,7 +1011,17 @@ function app(){
       this.tickets=[...this.tickets,...fresh]; this.queue({op:'insert',rows:fresh}); this.gName=''; this.busy=false;
     },
     remove(t){ if(!this.can('backup')) return; if(confirm(`Delete ticket ${t.number}?`)){ this.tickets=this.tickets.filter(x=>x!==t); delete this.sel[t.number]; this.queue({op:'delete',numbers:[t.number]}); } },
-    clearAll(){ if(!this.can('backup')) return; if(confirm('Delete every ticket on this device and in the cloud? This cannot be undone.')){ this.tickets=[]; this.sel={}; this.queue({op:'purge'}); } },
+    async clearAll(){
+  if(!this.can('backup')) return;
+  if(!confirm('Delete every ticket on this device and in the cloud? This cannot be undone.')) return;
+  this.tickets=[]; this.sel={};
+  this.pending=this.pending.filter(o=>o.op!=='insert'&&o.op!=='upsert'&&o.op!=='seed'&&o.op!=='purge'); this.save(PQ,this.pending);
+  if(sb&&navigator.onLine){
+    try{ await this.run({op:'purge'}); this.cloudErr=''; localStorage.setItem(SF,'1'); return; }
+    catch(e){ this.cloudErr=this.errMsg(e); }
+  }
+  this.queue({op:'purge'});
+  },
     resetScans(){ if(!this.can('backup')) return; if(confirm('Mark every ticket as Unused again, on all devices?')){ this.tickets.forEach(t=>{t.status='Unused';t.usedAt=null;}); this.queue({op:'reset'}); } },
 
     printTickets(list){
@@ -1320,9 +1330,10 @@ function app(){
       try{
         this.gDevice=localStorage.getItem('gatekeeper.device.v1')||((crypto.randomUUID?crypto.randomUUID():this.rnd(24)));
         localStorage.setItem('gatekeeper.device.v1',this.gDevice);
-        const d=await Promise.race([sb.rpc('public_design'),new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout')),5000))]);
-        if(d.error) throw d.error;
-        if(d.data) this.tpl=this.mergeTpl(d.data);
+        try{
+          const d=await Promise.race([sb.rpc('public_design'),new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout')),5000))]);
+          if(!d.error&&d.data) this.tpl=this.mergeTpl(d.data);
+        }catch(e){}
         await this.refreshLiveTicket();
         this.gRefreshTimer=setInterval(()=>this.refreshLiveTicket(),30000);
         this.gTokenTimer=setInterval(()=>this.rotateGuestToken(),25000);
@@ -1338,21 +1349,22 @@ function app(){
       if(!sb||!this.guest||!navigator.onLine) return;
       try{
         const r=await Promise.race([
-          sb.from('tickets').select('number, tier, code, salt, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at').eq('number',this.guest.number).single(),
+          sb.from('tickets').select('number, tier, code, salt, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at').eq('number',this.guest.number).maybeSingle(),
           new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout')),5000))
         ]);
         if(r.error) throw r.error;
         if(!r.data) throw new Error('Ticket Not Found');
         const suppliedToken=String(this.guest.code||'').toUpperCase();
         const validTokens=[r.data.active_token,r.data.salt,r.data.code].filter(Boolean).map(String).map(v=>v.toUpperCase());
-        if(suppliedToken&&!validTokens.includes(suppliedToken)){ this.gState='ERROR'; this.gErr='Ticket Not Found'; return; }
+        // The number is authoritative. A stale or rotated suffix must never hide an existing ticket.
+        if(suppliedToken&&!validTokens.includes(suppliedToken)) this.gState='OK';
         this.gt=this.fromRow(r.data); this.gState='OK'; this.gPayload=`TKT|${this.gt.number}|${this.gt.activeToken||this.gt.code}`;
         this.gTtl=30; this.gSeconds=this.gTtl; this.gTtlPercent=100;
         clearInterval(this.gTimer); this.gTimer=setInterval(()=>{this.gSeconds=Math.max(0,this.gSeconds-1);this.gTtlPercent=this.gTtl?this.gSeconds/this.gTtl*100:0;},1000);
         if(this.gt.shared&&!this.gt.usedAt) this.rotateGuestToken();
       }catch(e){
         this.gOnline=navigator.onLine;
-        if(!this.gt) this.gErr='Ticket Not Found';
+        if(!this.gt) this.gErr=/timeout|network|fetch/i.test(e.message||'')?'Could not load this ticket. Check your connection and try again.':'Ticket Not Found';
       }
     },
 
