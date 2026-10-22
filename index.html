@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kivvulu — Ticket Studio</title>
+<link rel="icon" href="data:,">
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
@@ -754,6 +755,7 @@ end $$;</pre>
   <div class="w-full max-w-md mx-auto space-y-4 mt-4">
     <div class="text-center text-sm text-white/60">Digital ticket</div>
     <p x-show="gErr" x-text="gErr" class="text-rose-300 text-center"></p>
+    <p x-show="gTechnical" x-text="gTechnical" class="text-xs text-white/45 text-center"></p>
     <p x-show="!gt&&!gErr" class="text-center text-white/60">Loading your ticket…</p>
   <template x-if="gt">
   <div class="space-y-4">
@@ -762,15 +764,15 @@ end $$;</pre>
   <p x-show="gState==='NOT_DIGITAL'" class="text-center text-amber-300 text-sm">This ticket has not been shared as a digital ticket.</p>
   <p x-show="gState==='VOID'" class="text-center text-rose-300 text-sm">This ticket has been voided.</p>
   <div x-show="gState==='OK'" x-html="ticketHTML({...gt,livePayload:gPayload},false,true)"></div>
-  <div x-show="gState==='OK'" class="bg-white rounded-2xl p-5 text-center text-stone-900">
+  <div x-show="gState==='OK'&&gPayload&&gOnline" class="bg-white rounded-2xl p-5 text-center text-stone-900">
   <div class="relative mx-auto w-full max-w-[280px]">
   <img :src="gPayload?qrUrl(gPayload):''" alt="Live ticket QR code" class="w-full" :class="gOnline?'':'opacity-0'">
-  <div x-show="!gOnline" class="absolute inset-0 flex items-center justify-center rounded-lg bg-stone-100 px-4 text-sm font-semibold text-stone-700">QR hidden while offline</div>
+  <div x-show="!gOnline" class="absolute inset-0 flex items-center justify-center rounded-lg bg-stone-100 px-4 text-sm font-semibold text-stone-700">No connection - reconnect to show your ticket</div>
   </div>
   <div class="text-3xl font-black mt-3" x-text="tierLabel(gt.tier)"></div>
   <div class="font-mono text-lg" x-text="gt.number"></div>
   <div class="text-sm text-stone-500 mt-1" x-text="access[gt.tier]"></div>
-  <div class="mt-3 text-xs text-stone-400" x-text="'Code refreshed at '+gRefreshedAt"></div>
+  <div class="mt-3 text-xs text-stone-400" x-text="gRefreshedAt?'Refreshed '+gRefreshedAt:''"></div>
   <div class="text-xs text-stone-400" x-text="'Phone: '+gDevice.slice(0,4)"></div>
   </div>
   <p class="text-xs text-white/50 text-center">Show this live QR at the gate. Do not screenshot or share the screen; lost or shared tickets may be locked.</p>
@@ -834,7 +836,7 @@ function app(){
   return {
     tab:SESS?(SESS.role==='gatekeeper'?'gate':SESS.role==='producer'?'tickets':'design'):'design', user:SESS, guest:GUEST, request:REQUEST, gt:null, gErr:'', requestTiers:[{name:'GEN',price:50000},{name:'VIP',price:100000},{name:'TABLE',price:3000000}], requestTier:'GEN', requestForm:{name:'',phone:'',email:'',payment:'Mobile Money',paymentPhone:'',cardNumber:'',expiry:'',cvv:''}, requestBusy:false, requestMessage:'', requestOk:false, requestTicket:null, lu:'', lp:'', showPw:false, loginErr:'', loginBusy:false, staff:[], nu:'', np:'', nr:'gatekeeper', staffMsg:'', staffOk:true, appUrl:localStorage.getItem(AU)||'', cloud:'offline', cloudErr:'', pending:[], syncing:false, flushing:false, tickets:[], tpl:defaultTpl(), pTier:'VIP', pName:'Amina Nakato', dTab:'canvas', selKey:'title', view:'edit', guides:null, tilt:{rx:0,ry:0,gx:50,gy:50}, presets:PRESETS, fonts:FONTS,
     gTier:'GEN', gQty:10, gName:'', busy:false, q:'', fTier:'', fStatus:'', sel:{},
-  gState:'', gPayload:'', gRefreshedAt:'', gSeconds:0, gTtlPercent:0, gOnline:true, gDevice:'', gTtl:30, gTimer:null, gRefreshTimer:null,
+  gState:'', gPayload:'', gRefreshedAt:'', gLastRefreshAt:0, gTechnical:'', gSeconds:0, gTtlPercent:0, gOnline:true, gDevice:'', gTtl:18, gTimer:null, gRefreshTimer:null, gRetryIndex:0, gPermanent:false,
     perSheet:6, paper:'A4', printHTML:'', drag:null,
     scanner:null, camError:'', result:null, locked:false, man:'',
     impMode:'merge', impDesign:true, msg:'', msgOk:true,
@@ -1315,50 +1317,55 @@ function app(){
         const number=prefix+'-'+String(last+1).padStart(4,'0'), salt=this.rnd(12), code=await this.makeCode(number,salt);
         const buyer=`${f.name} | ${f.phone} | ${f.email} | ${f.payment}`;
         const row={number,tier:this.requestTier,salt,code,buyer,status:'Unused',created_at:Date.now(),used_at:null,printed:false,shared:false};
-        const created=await sb.from('tickets').insert(row).select('number, tier, code, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at').single();
+        const created=await sb.from('tickets').insert(row).select('number, tier, code, buyer, status, created_at, used_at, printed, shared').single();
         if(created.error) throw created.error;
         this.requestTicket=created.data; this.requestOk=true; this.requestMessage=`Payment received: ${this.formatUgx(this.requestPrice)}. Ticket ${number} was created.`;
       }catch(e){ this.requestOk=false; this.requestMessage='The ticket could not be created. Please try again.'; }
       this.requestBusy=false;
     },
     async guestInit(){
-      if(!sb){ this.gErr='Could not load this ticket. Check your connection.'; return; }
-      try{
-        this.gDevice=localStorage.getItem('gatekeeper.device.v1')||((crypto.randomUUID?crypto.randomUUID():this.rnd(24)));
-        localStorage.setItem('gatekeeper.device.v1',this.gDevice);
-        try{
-          const d=await Promise.race([sb.rpc('public_design'),new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout')),5000))]);
-          if(!d.error&&d.data) this.tpl=this.mergeTpl(d.data);
-        }catch(e){}
-        await this.refreshLiveTicket();
-        this.gRefreshTimer=setInterval(()=>this.refreshLiveTicket(),18000);
-        this.gOnline=navigator.onLine;
-        window.addEventListener('online',()=>{this.gOnline=true;this.refreshLiveTicket();});
-        window.addEventListener('offline',()=>{this.gOnline=false;});
-        document.addEventListener('visibilitychange',()=>{if(!document.hidden)this.refreshLiveTicket();});
-      }catch(e){
-        if(!this.gt) this.gErr='Ticket Not Found. Check the link and try again.';
-      }
+      if(this._guestStarted) return;
+      this._guestStarted=true;
+      this.gDevice=localStorage.getItem('gatekeeper.device.v1')||((crypto.randomUUID?crypto.randomUUID():this.rnd(24)));
+      localStorage.setItem('gatekeeper.device.v1',this.gDevice);
+      try{ const d=await Promise.race([sb&&sb.rpc('public_design'),new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout')),5000))]); if(d&&!d.error&&d.data) this.tpl=this.mergeTpl(d.data); }catch(e){}
+      this.gOnline=navigator.onLine;
+      await this.refreshLiveTicket();
+      window.addEventListener('online',()=>{this.gOnline=true;this.gRetryIndex=0;this.scheduleGuestRefresh(0);});
+      window.addEventListener('offline',()=>{this.gOnline=false;this.gPayload='';this.gErr='No connection - reconnect to show your ticket';});
+      document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!this.gPermanent)this.scheduleGuestRefresh(0);});
+    },
+    scheduleGuestRefresh(delay=18000){
+      clearInterval(this.gRefreshTimer);
+      this.gRefreshTimer=setInterval(()=>{ clearInterval(this.gRefreshTimer); this.gRefreshTimer=null; this.refreshLiveTicket(); },delay);
+    },
+    stopGuestRefresh(){ clearInterval(this.gRefreshTimer); this.gRefreshTimer=null; },
+    guestPermanentError(error){
+      const text=String(error?.message||error||'');
+      return error?.status===404||error?.code==='PGRST202'||/function|schema cache|does not exist/i.test(text);
     },
     async refreshLiveTicket(){
-      if(!sb||!this.guest||!navigator.onLine) return;
+      if(!sb||!this.guest||!navigator.onLine||this.gPermanent) return;
       try{
-        const r=await Promise.race([
-          sb.rpc('ticket_live',{p_number:this.guest.number,p_device:this.gDevice}),
-          new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout')),5000))
-        ]);
+        const p_number=String(this.guest.number).toUpperCase(), p_code=String(this.guest.code||'').toUpperCase(), p_device=this.gDevice;
+        const r=await Promise.race([sb.rpc('ticket_live', { p_number, p_code, p_device }),new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout')),5000))]);
         if(r.error) throw r.error;
         const answer=Array.isArray(r.data)?r.data[0]:r.data;
-        if(!answer||!answer.payload) throw new Error('Ticket Not Found');
+        const state=String(answer?.state||answer?.status||'').toUpperCase();
+        if(['USED','VOID','NOT_FOUND','NOT_DIGITAL','LOCKED'].includes(state)){
+          this.stopGuestRefresh(); this.gState=state; this.gPayload=''; this.gErr={USED:'This ticket has already been scanned at the gate.',VOID:'This ticket has been voided.',NOT_FOUND:'Ticket not found.',NOT_DIGITAL:'This ticket has not been shared as a digital ticket.',LOCKED:'This ticket is temporarily locked to another device.'}[state]; return;
+        }
+        if(!answer?.payload) throw Object.assign(new Error('NOT_FOUND'),{code:'NOT_FOUND'});
         this.gt={number:answer.number||this.guest.number,tier:answer.tier,buyer:answer.buyer||'',status:answer.status,usedAt:answer.used_at,printed:!!answer.printed,shared:true};
-        this.gPayload=answer.payload;
-        this.gState=answer.status==='Used'?'USED':answer.status==='Void'?'VOID':'OK';
-        this.gErr=''; this.gOnline=true; this.gRefreshedAt=new Date().toLocaleTimeString();
-        this.gTtl=18; this.gSeconds=this.gTtl; this.gTtlPercent=100;
-        clearInterval(this.gTimer); this.gTimer=setInterval(()=>{this.gSeconds=Math.max(0,this.gSeconds-1);this.gTtlPercent=this.gTtl?this.gSeconds/this.gTtl*100:0;},1000);
+        this.gPayload=answer.payload; this.gState='OK'; this.gErr=''; this.gTechnical=''; this.gOnline=true; this.gLastRefreshAt=Date.now(); this.gRefreshedAt=new Date().toLocaleTimeString(); this.gRetryIndex=0; this.gTtl=18; this.gSeconds=18;
+        this.stopGuestRefresh(); this.scheduleGuestRefresh(18000);
       }catch(e){
         this.gOnline=navigator.onLine;
-        if(!this.gt) this.gErr=e.message==='Ticket Not Found'?'Ticket Not Found. Check the link and try again.':'Could not load this ticket. Check your connection and try again.';
+        this.gTechnical=e?.status?`HTTP ${e.status}`:e?.code||e?.message||'Network error';
+        if(this.guestPermanentError(e)){ this.stopGuestRefresh(); this.gPermanent=true; this.gPayload=''; this.gState='ERROR'; this.gErr='Database setup incomplete. Ask the organisers to finish the ticket setup.'; return; }
+        this.gRetryIndex=Math.min(this.gRetryIndex+1,4); const delay=[3000,6000,12000,20000][this.gRetryIndex-1]||20000;
+        if(this.gSeconds<=0){this.gPayload='';this.gErr='No connection - reconnect to show your ticket';}
+        this.stopGuestRefresh(); this.scheduleGuestRefresh(delay);
       }
     },
 
