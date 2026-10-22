@@ -866,8 +866,9 @@ function app(){
     get selCount(){ return this.tickets.filter(t=>this.sel[t.number]).length; },
     get filtered(){
       const q=this.q.trim().toLowerCase();
-      return this.tickets.filter(t=>(!this.fTier||t.tier===this.fTier)
-        &&(!this.fStatus||(this.fStatus==='Unprinted'?(!t.printed&&!t.shared):t.status===this.fStatus))
+      return this.tickets.filter(t=>!t.shared&&!t.printed
+        &&(!this.fTier||t.tier===this.fTier)
+        &&(!this.fStatus||(this.fStatus==='Unprinted'?true:t.status===this.fStatus))
         &&(!q||(t.number+' '+t.buyer+' '+t.code).toLowerCase().includes(q)));
     },
     get statCards(){
@@ -1083,6 +1084,7 @@ function app(){
       return ({admin:['design','tickets','gate','backup'],producer:['tickets'],gatekeeper:['gate']}[this.role]||[]).map(k=>[k,L[k]]);
     },
     can(k){ return this.tabs.some(x=>x[0]===k); },
+    setTab(k){ if(this.can(k)) this.tab=k; },
     get roleLabel(){ return ({admin:'Super Admin',producer:'Producer',gatekeeper:'Gatekeeper'}[this.role]||''); },
     get cloudLabel(){ const n=this.pending.length; return this.cloud==='live'?'Live sync':this.cloud==='sync'?'Syncing…':'Offline'+(n?` · ${n} queued`:''); },
     toRow(t){ return {number:t.number,tier:t.tier,code:t.code,salt:t.salt,buyer:t.buyer||'',status:t.status,created_at:t.createdAt,used_at:t.usedAt??null,printed:!!t.printed,shared:!!t.shared,active_token:t.activeToken||null,token_updated_at:t.tokenUpdatedAt||null}; },
@@ -1336,11 +1338,14 @@ function app(){
       if(!sb||!this.guest||!navigator.onLine) return;
       try{
         const r=await Promise.race([
-          sb.from('tickets').select('number, tier, code, salt, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at').eq('number',this.guest.number).maybeSingle(),
+          sb.from('tickets').select('number, tier, code, salt, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at').eq('number',this.guest.number).single(),
           new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout')),5000))
         ]);
         if(r.error) throw r.error;
-        if(!r.data){ this.gState='ERROR'; this.gErr='Ticket Not Found'; return; }
+        if(!r.data) throw new Error('Ticket Not Found');
+        const suppliedToken=String(this.guest.code||'').toUpperCase();
+        const validTokens=[r.data.active_token,r.data.salt,r.data.code].filter(Boolean).map(String).map(v=>v.toUpperCase());
+        if(suppliedToken&&!validTokens.includes(suppliedToken)){ this.gState='ERROR'; this.gErr='Ticket Not Found'; return; }
         this.gt=this.fromRow(r.data); this.gState='OK'; this.gPayload=`TKT|${this.gt.number}|${this.gt.activeToken||this.gt.code}`;
         this.gTtl=30; this.gSeconds=this.gTtl; this.gTtlPercent=100;
         clearInterval(this.gTimer); this.gTimer=setInterval(()=>{this.gSeconds=Math.max(0,this.gSeconds-1);this.gTtlPercent=this.gTtl?this.gSeconds/this.gTtl*100:0;},1000);
@@ -1355,7 +1360,7 @@ function app(){
       if(!sb||!this.gt||!this.gt.shared||this.gt.status==='Used'||!navigator.onLine) return;
       const activeToken=this.rnd(24), tokenUpdatedAt=new Date().toISOString();
       try{
-        const r=await sb.from('tickets').update({active_token:activeToken,token_updated_at:tokenUpdatedAt}).eq('number',this.gt.number).eq('shared',true).eq('status','Unused').select('number, tier, code, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at').maybeSingle();
+        const r=await sb.from('tickets').update({active_token:activeToken,token_updated_at:tokenUpdatedAt}).eq('number',this.gt.number).eq('shared',true).eq('status','Unused').select('number, tier, code, salt, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at').maybeSingle();
         if(r.error||!r.data) return;
         this.gt=this.fromRow(r.data); this.gPayload=`TKT|${this.gt.number}|${this.gt.activeToken}`;
       }catch(e){}
