@@ -1158,7 +1158,11 @@ function app(){
       for(let i=0;i<list.length;i+=n)
         h+=`<section class="sheet" style="grid-template-columns:repeat(${L[0]},${L[1]}mm)">`+list.slice(i,i+n).map(t=>`<div class="cell">${this.ticketHTML(t,false)}</div>`).join('')+'</section>';
       this.printHTML=h;
-      setTimeout(()=>{ window.print(); list.forEach(t=>t.printed=true); this.queue({op:'printed',numbers:list.map(t=>t.number)}); },250);
+      setTimeout(()=>{ window.print(); setTimeout(()=>{
+        if(confirm(`Did ${list.length} ticket${list.length>1?'s':''} print successfully?\n\nOK = yes, mark as printed.\nCancel = no, keep them in the print queue.`)){
+          list.forEach(t=>{ t.printed=true; delete this.sel[t.number]; }); this.queue({op:'printed',numbers:list.map(t=>t.number)});
+        }
+      },400); },250);
     },
 
     /* ---------- scanner ---------- */
@@ -1176,7 +1180,7 @@ function app(){
 
     async onScan(text,manual){
       if(!this.can('gate')||this.locked||!String(text||'').trim()) return;
-      this.locked=true; let t=null, scannedCode='', denied='';
+      this.locked=true; let t=null, scannedCode='', denied='', why='', soft=false;
       const raw=String(text).trim();
       const fields='number, tier, code, salt, buyer, status, created_at, used_at, printed, shared, active_token, token_updated_at';
       const normalizedNumber=value=>{
@@ -1189,23 +1193,28 @@ function app(){
         if(sb&&navigator.onLine){
           // Fetch by the canonical serial only. Token comparison stays local so malformed QR
           // payloads can never become PostgREST filters and cause a 400 response.
-          const r=await sb.from('tickets').select(fields).eq('number',normalized).maybeSingle();
-          if(r.error||!r.data) return null;
+          let r; try{ r=await Promise.race([sb.from('tickets').select(fields).eq('number',normalized).maybeSingle(),new Promise((_,j)=>setTimeout(()=>j(new Error('timeout')),6000))]); }catch(e){ soft=true; return null; }
+          if(r.error){ soft=true; return null; } if(!r.data) return null;
           const row=this.fromRow(r.data), expected=String(token||'').trim().toUpperCase();
           if(requireToken){
             const current=row.shared?String(row.activeToken||'').trim().toUpperCase():String(row.code||row.salt||'').trim().toUpperCase();
             if(!expected||!current||expected!==current) return null;
           }
           if(row.shared&&row.status!=='Used'&&requireToken){
-            try{
-              const lv=await sb.rpc('ticket_live',{p_number:normalized,p_code:expected});
-              if(!lv.error&&lv.data&&lv.data.success===false){ denied=lv.data.message||''; return null; }
-            }catch(e){}
+            // live check is mandatory: any failure to get a clear YES means the ticket is NOT accepted
+            let lv; try{ lv=await Promise.race([sb.rpc('ticket_live',{p_number:normalized,p_code:expected}),new Promise((_,j)=>setTimeout(()=>j(new Error('timeout')),6000))]); }catch(e){ soft=true; return null; }
+            if(lv.error||!lv.data){ soft=true; return null; }
+            if(lv.data.success!==true){
+              denied=lv.data.message||'Ticket Rejected';
+              why=/expired/i.test(denied)?'ACCESS DENIED — NO LIVE TICKET PAGE DETECTED (SCREENSHOT OR CLOSED TAB)':'ACCESS DENIED — '+denied.toUpperCase();
+              return null;
+            }
           }
           return row;
         }
         const row=this.tickets.find(x=>x.number===normalized);
         if(!row) return null;
+        if(row.shared){ denied='Connection required'; why='ACCESS DENIED — DIGITAL TICKETS CAN ONLY BE VERIFIED ONLINE'; return null; }
         if(requireToken){
           const expected=String(token||'').trim().toUpperCase(), current=row.shared?String(row.activeToken||'').trim().toUpperCase():String(row.code||row.salt||'').trim().toUpperCase();
           if(!expected||!current||expected!==current) return null;
@@ -1222,9 +1231,9 @@ function app(){
           t=await loadTicket(num,scannedCode,true);
         }
       }
-      if(!t) this.result={ok:false,title:denied?denied.toUpperCase():'INVALID / EXPIRED TICKET',detail:denied?'ACCESS DENIED — NO LIVE TICKET PAGE DETECTED (SCREENSHOT OR CLOSED TAB)':'ACCESS DENIED — QR CODE IS INVALID OR EXPIRED'};
+      if(!t) this.result=soft?{ok:false,title:'CAN\'T VERIFY — SCAN AGAIN',detail:'POOR CONNECTION. THIS TICKET WAS NOT ACCEPTED. CHECK SIGNAL AND SCAN AGAIN'}:{ok:false,title:denied?denied.toUpperCase():'INVALID / EXPIRED TICKET',detail:why||'ACCESS DENIED — QR CODE IS INVALID OR EXPIRED'};
       else if(t.status==='Used') this.result={ok:false,title:'TICKET ALREADY USED',detail:'ALREADY SCANNED AT '+this.fmt(t.usedAt),t};
-      else{ const ok=await this.claim(t); this.result=ok?{ok:true,title:'VALID TICKET - ENTRY ALLOWED',detail:t.printed?'ENTRY ALLOWED · ALREADY PRINTED — DO NOT PRINT A DUPLICATE':'ENTRY ALLOWED',t:{...t}}:{ok:false,title:'TICKET ALREADY USED',detail:'ALREADY SCANNED AT '+this.fmt(t.usedAt),t}; }
+      else{ const ok=await this.claim(t); this.result=ok===null?{ok:false,title:'CAN\'T VERIFY — SCAN AGAIN',detail:'POOR CONNECTION. THIS TICKET WAS NOT ACCEPTED. CHECK SIGNAL AND SCAN AGAIN'}:ok?{ok:true,title:'VALID TICKET - ENTRY ALLOWED',detail:t.printed?'ENTRY ALLOWED · ALREADY PRINTED — DO NOT PRINT A DUPLICATE':'ENTRY ALLOWED',t:{...t}}:{ok:false,title:'TICKET ALREADY USED',detail:'ALREADY SCANNED AT '+this.fmt(t.usedAt),t}; }
       this.beep(this.result.ok);
       if(navigator.vibrate) navigator.vibrate(this.result.ok?120:[200,100,200]);
     },
@@ -1335,7 +1344,8 @@ function app(){
     /* atomic claim: the cloud only lets ONE device flip Unused to Used */
     async claim(t){
       const ts=Date.now();
-      if(sb&&this.cloud==='live'){
+      if(t.shared&&!(sb&&this.cloud!=='offline')) return null;
+      if(sb&&this.cloud!=='offline'){
         try{
           const r=await Promise.race([sb.from('tickets').update({status:'Used',used_at:ts}).eq('number',t.number).eq('status','Unused').select(),
             new Promise((_,j)=>setTimeout(()=>j(new Error('timeout')),3500))]);
@@ -1346,7 +1356,7 @@ function app(){
             this.queue({op:'upsert',rows:[{...t,status:'Used',usedAt:ts}]});
           }
           t.status='Used'; t.usedAt=ts; return true;
-        }catch(e){}
+        }catch(e){ if(t.shared) return null; }
       }
       t.status='Used'; t.usedAt=ts; this.queue({op:'claim',number:t.number,usedAt:ts}); return true;
     },
@@ -1432,7 +1442,7 @@ function app(){
       const text=`Your ${t.tier} ticket${t.buyer?' for '+t.buyer:''} (${t.number}). Show this QR code at the gate: `;
       try{
         if(navigator.share) await navigator.share({title:'Digital ticket '+t.number,text,url:u});
-        else window.open('https://wa.me/?text='+encodeURIComponent(text+u),'_blank');
+        else{ window.open('https://wa.me/?text='+encodeURIComponent(text+u),'_blank'); if(!confirm('Did you send '+t.number+' on WhatsApp?\n\nOK = yes, mark as shared.\nCancel = no, keep it unshared.')) return; }
         this.markShared(t);
       }catch(e){}
     },
@@ -1441,16 +1451,22 @@ function app(){
       if(picked.length>chosen.length) alert((picked.length-chosen.length)+' selected ticket(s) were already printed and were skipped, so no ticket exists in both paper and digital form.');
       if(!chosen.length) return;
       if(chosen.length>8){ alert('You can share a maximum of 8 tickets at once.'); return; }
-      chosen.forEach(t=>this.markShared(t));
       const links=chosen.map(t=>`${t.number}: ${this.link(t)}`).join('\n');
-      try{ if(navigator.share) await navigator.share({title:`${chosen.length} digital tickets`,text:'Digital tickets\n'+links}); else await navigator.clipboard.writeText(links); }
-      catch(e){ try{ await navigator.clipboard.writeText(links); }catch(_){} }
-      chosen.forEach(t=>delete this.sel[t.number]);
+      const ask=()=>confirm('Links for '+chosen.length+' ticket(s) were copied. Did you send them?\n\nOK = yes, mark as shared.\nCancel = no, keep them unshared.');
+      let sent=false;
+      try{
+        if(navigator.share){ await navigator.share({title:`${chosen.length} digital tickets`,text:'Digital tickets\n'+links}); sent=true; }
+        else{ await navigator.clipboard.writeText(links); sent=ask(); }
+      }catch(e){
+        if(e&&e.name==='AbortError') return;
+        try{ await navigator.clipboard.writeText(links); sent=ask(); }catch(_){}
+      }
+      if(sent) chosen.forEach(t=>this.markShared(t));
     },
     async copyLink(t){
       if(!t.shared&&t.printed&&!confirm(t.number+' was already printed. Copying a digital link creates a second usable copy. Continue?')) return;
       const u=this.link(t); if(!u) return;
-      try{ await navigator.clipboard.writeText(u); }catch(e){ prompt('Copy this ticket link:',u); }
+      try{ await navigator.clipboard.writeText(u); }catch(e){ if(prompt('Copy this ticket link:',u)===null) return; }
       this.markShared(t);
     },
     markShared(t){
@@ -1524,7 +1540,7 @@ function app(){
 
     /* heartbeat: proves a live page is open. A screenshot is frozen and cannot send it. */
     async sendHeartbeat(){
-      if(!sb||!this.guest||!this.gt||!navigator.onLine||this.gt.status==='Used') return;
+      if(!sb||!this.guest||!this.gt||!navigator.onLine||document.hidden||this.gt.status==='Used') return;
       try{
         const r=await sb.rpc('ticket_heartbeat',{p_number:this.guest.number,p_code:this.guest.code||this.gt.code});
         if(!r.error&&r.data&&r.data.status==='Used'){ this.gt.status='Used'; this.gState='USED'; }
