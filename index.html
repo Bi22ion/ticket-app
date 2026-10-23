@@ -41,7 +41,7 @@
  #printArea{display:none}
  .sheet{display:grid;gap:4mm;justify-content:center;align-content:start;break-after:page}
  .sheet:last-child{break-after:auto}
- .cell{outline:.2mm dashed #aaa}
+ .cell{outline:.2mm dashed #aaa;break-inside:avoid}
  @media print{
   body>*:not(#printArea){display:none!important}
   #printArea{display:block!important}
@@ -350,8 +350,10 @@
           <option value="letter">US Letter</option>
         </select>
       </label>
-      <button class="btn-dark py-2.5 px-5 font-medium shadow-sm" @click="printTickets(tickets.filter(t=>sel[t.number]&&!t.shared&&!t.printed))" x-text="`Print ${selCount} selected (${Math.ceil(selCount/perSheet)} sheets)`" :disabled="!selCount"></button>
+      <button class="btn-dark py-2.5 px-5 font-medium shadow-sm" @click="printTickets(tickets.filter(t=>sel[t.number]&&printable(t)))" x-text="`Print ${selCount} selected (${Math.ceil(selCount/layout.n)} ${Math.ceil(selCount/layout.n)===1?'sheet':'sheets'})`" :disabled="!selCount"></button>
       <button class="btn bg-sky-600 hover:bg-sky-700 text-white font-medium py-2.5 px-5 shadow-sm border-sky-600" @click="shareSelected()" :disabled="!shareCount" x-text="shareCount?`Share Selected (${shareCount}/8)`:'Share Selected'"></button>
+      <div class="w-full text-xs text-stone-500" x-text="layout.text"></div>
+      <div class="w-full text-xs text-amber-700" x-show="skippedCount"><span x-text="skippedCount+' selected ticket(s) are already used, printed or shared, so they are skipped for both printing and sharing.'"></span> <button class="underline font-medium" @click="dropSkipped()">Unselect them</button></div>
       <span class="text-xs text-stone-400 italic ml-auto">Tip: Choose "Save as PDF" in your system print dialog to export a clean file.</span>
     </div>
   </div>
@@ -379,8 +381,8 @@
         <button class="btn bg-sky-600 hover:bg-sky-700 text-white text-xs font-medium px-3 py-2" @click="shareSelected()" :disabled="!shareCount" x-text="shareCount?`Share Selected (${shareCount}/8)`:'Share Selected'"></button>
         <select x-model="qView" class="inp !w-48 bg-white" aria-label="Ticket view"><option value="queue">Print queue (not shared / printed)</option><option value="all">All tickets (inventory)</option></select>
         <span class="text-xs text-stone-500" x-show="qView==='queue'&&hiddenCount" x-text="hiddenCount+' shared/printed hidden'"></span>
-        <button class="btn bg-white hover:bg-stone-100 text-stone-700 text-xs font-medium px-3 py-2" @click="filtered.filter(t=>!t.shared&&!t.printed).forEach(t=>sel[t.number]=true)">Select Shown</button>
-        <button class="btn bg-white hover:bg-stone-100 text-stone-700 text-xs font-medium px-3 py-2" @click="filtered.filter(t=>!t.printed&&!t.shared).forEach(t=>sel[t.number]=true)">Select Unprinted</button>
+        <button class="btn bg-white hover:bg-stone-100 text-stone-700 text-xs font-medium px-3 py-2" @click="filtered.filter(t=>printable(t)).forEach(t=>sel[t.number]=true)">Select Shown</button>
+        <button class="btn bg-white hover:bg-stone-100 text-stone-700 text-xs font-medium px-3 py-2" @click="filtered.filter(t=>printable(t)).forEach(t=>sel[t.number]=true)">Select Unprinted</button>
         <button class="btn bg-white hover:bg-rose-50 text-rose-600 text-xs font-medium px-3 py-2 border-stone-200" @click="sel={}">Clear Selection</button>
       </div>
     </div>
@@ -393,7 +395,7 @@
       <table class="w-full text-sm text-left border-collapse">
         <thead class="bg-stone-100/80 text-stone-600 font-semibold text-xs uppercase tracking-wider sticky top-0 z-10 backdrop-blur-sm border-b border-stone-200">
           <tr>
-            <th class="p-3 w-10 text-center"><input type="checkbox" @change="if($event.target.checked){ filtered.filter(t=>!t.shared&&!t.printed).forEach(t=>sel[t.number]=true) } else { sel={} }" class="rounded border-stone-300"></th>
+            <th class="p-3 w-10 text-center"><input type="checkbox" @change="if($event.target.checked){ filtered.filter(t=>printable(t)).forEach(t=>sel[t.number]=true) } else { sel={} }" class="rounded border-stone-300"></th>
             <th class="p-3">Serial Number</th>
             <th class="p-3">Tier</th>
             <th class="p-3">Attendee / Notes</th>
@@ -407,7 +409,7 @@
           <template x-for="t in filtered" :key="t.number">
             <tr class="hover:bg-stone-50/80 transition-colors">
               <td class="p-3 text-center">
-                <input type="checkbox" :checked="sel[t.number]" @change="sel[t.number]=$event.target.checked" :disabled="t.shared||t.printed" :aria-label="'Select '+t.number" class="rounded border-stone-300">
+                <input type="checkbox" :checked="sel[t.number]" @change="sel[t.number]=$event.target.checked" :disabled="!printable(t)" :aria-label="'Select '+t.number" class="rounded border-stone-300">
               </td>
               <td class="p-3 font-mono font-semibold text-stone-800" x-text="t.number"></td>
               <td class="p-3">
@@ -937,13 +939,15 @@ function app(){
     tab:SESS?(SESS.role==='gatekeeper'?'gate':SESS.role==='producer'?'tickets':'design'):'design', user:SESS, guest:GUEST, request:REQUEST, gt:null, gErr:'', requestTiers:[{name:'GEN',price:50000},{name:'VIP',price:100000},{name:'TABLE',price:3000000}], requestTier:'GEN', requestForm:{name:'',phone:'',email:'',payment:'Mobile Money',paymentPhone:'',cardNumber:'',expiry:'',cvv:''}, requestBusy:false, requestMessage:'', requestOk:false, requestTicket:null, lu:'', lp:'', showPw:false, loginErr:'', loginBusy:false, staff:[], nu:'', np:'', nr:'gatekeeper', staffMsg:'', staffOk:true, appUrl:localStorage.getItem(AU)||'', cloud:'offline', cloudErr:'', pending:[], syncing:false, flushing:false, tickets:[], tpl:defaultTpl(), pTier:'VIP', pName:'Amina Nakato', dTab:'canvas', selKey:'title', view:'edit', guides:null, tilt:{rx:0,ry:0,gx:50,gy:50}, presets:PRESETS, fonts:FONTS,
     gTier:'GEN', gQty:10, gName:'', busy:false, q:'', fTier:'', fStatus:'', qView:'queue', sel:{},
   gState:'', gPayload:'', gSeconds:0, gTtlPercent:0, gOnline:true, gDevice:'', gTtl:30, gTimer:null, gHeartTimer:null, gRefreshTimer:null, gTokenTimer:null,
-    perSheet:3, paper:'A4', printHTML:'', drag:null,
+    perSheet:(()=>{try{const v=parseInt(localStorage.getItem('qf_perSheet'),10);return v>=1&&v<=12?v:3;}catch(e){return 3;}})(), paper:(()=>{try{return localStorage.getItem('qf_paper')==='letter'?'letter':'A4';}catch(e){return 'A4';}})(), printHTML:'', drag:null,
     scanner:null, camError:'', result:null, locked:false, man:'',
     impMode:'merge', impDesign:true, msg:'', msgOk:true,
     access:{GEN:'General admission',VIP:'VIP area access',TABLE:'TABLE seating'},
     tierLabel(t){ return {GEN:'GEN',VIP:'VIP',TABLE:'TABLE'}[t]||t; },
 
     init(){
+      this.$watch('perSheet',v=>{ if(Number.isInteger(v)&&v>0) try{ localStorage.setItem('qf_perSheet',String(v)); }catch(e){} });
+      this.$watch('paper',v=>{ try{ localStorage.setItem('qf_paper',String(v)); }catch(e){} });
       try{ this.tickets=this.cleanTickets(JSON.parse(localStorage.getItem(DB)||'[]')); }catch(e){ this.tickets=[]; }
       try{ const t=JSON.parse(localStorage.getItem(TP)||'null'); if(t) this.tpl=this.mergeTpl(t); }catch(e){}
       this.$watch('tickets',v=>this.save(DB,v));
@@ -987,8 +991,18 @@ function app(){
       return n;
     },
     get sample(){ return {number:{GEN:'GEN',VIP:'VIP',TABLE:'TABLE'}[this.pTier]+'-0001',tier:this.pTier,buyer:this.pName,code:'SAMPLE000000'}; },
+    printable(t){ return !!t&&!t.shared&&!t.printed&&t.status==='Unused'; },
+    get skippedCount(){ return this.tickets.filter(t=>this.sel[t.number]&&!this.printable(t)).length; },
+    dropSkipped(){ this.tickets.forEach(t=>{ if(this.sel[t.number]&&!this.printable(t)) delete this.sel[t.number]; }); },
+    get layout(){
+      const n=(Number.isInteger(this.perSheet)&&this.perSheet>0)?this.perSheet:3, r=this.ratio||2,
+        cols=(n<=3||n===5||(n===4&&r>=1.5))?1:2, rows=Math.ceil(n/cols),
+        mh=((this.paper==='A4'?255:240)-(rows-1)*4)/rows, mw=(190-(cols-1)*4)/cols,
+        w=Math.floor(Math.min(mw,mh*r)), h=Math.round(w/r);
+      return {n,cols,rows,w,h,L:[cols,w],text:`Layout: ${n} per page, ${cols} column${cols>1?'s':''} x ${rows} row${rows>1?'s':''}, each ticket about ${w} x ${h} mm`};
+    },
     get hiddenCount(){ return this.tickets.filter(t=>t&&(t.shared||t.printed)).length; },
-    get selCount(){ return this.tickets.filter(t=>this.sel[t.number]&&!t.shared&&!t.printed).length; },
+    get selCount(){ return this.tickets.filter(t=>this.sel[t.number]&&this.printable(t)).length; },
     get filtered(){
       const q=String(this.q||'').trim().toLowerCase(), seen=new Set();
       return (Array.isArray(this.tickets)?this.tickets:[]).filter(t=>{
@@ -1154,9 +1168,9 @@ function app(){
 
     reprint(t){ if(!this.can('backup')||!t.printed||t.shared) return; if(confirm(t.number+' was already printed. A reprint makes a second paper copy; both stay valid until one is scanned. Reprint?')) this.printTickets([t],true); },
     printTickets(list,force){
-      list=list.filter(t=>!t.shared&&(force||!t.printed));
+      list=list.filter(t=>t.status==='Unused'&&!t.shared&&(force||!t.printed));
       if(!list.length||!this.can('tickets')) return;
-      const n=this.perSheet, r=this.ratio, cols=(n<=3||n===5||(n===4&&r>=1.5))?1:2, rows=Math.ceil(n/cols), mh=((this.paper==='A4'?255:240)-(rows-1)*4)/rows, mw=(190-(cols-1)*4)/cols, L=[cols,Math.floor(Math.min(mw,mh*r))];
+      const {n,L}=this.layout;
       let h='';
       for(let i=0;i<list.length;i+=n)
         h+=`<section class="sheet" style="grid-template-columns:repeat(${L[0]},${L[1]}mm)">`+list.slice(i,i+n).map(t=>`<div class="cell">${this.ticketHTML(t,false)}</div>`).join('')+'</section>';
@@ -1263,7 +1277,7 @@ function app(){
     get cloudLabel(){ const n=this.pending.length; return this.cloud==='live'?'Live sync':this.cloud==='sync'?'Syncing…':'Offline'+(n?` · ${n} queued`:''); },
     toRow(t){ return {number:t.number,tier:t.tier,code:t.code,salt:t.salt,buyer:t.buyer||'',status:t.status,created_at:t.createdAt,used_at:t.usedAt??null,printed:!!t.printed,shared:!!t.shared,active_token:t.activeToken||null,token_updated_at:t.tokenUpdatedAt||null}; },
     fromRow(r){ return {number:r.number,tier:r.tier,code:r.code,salt:r.salt,buyer:r.buyer||'',status:r.status,createdAt:Number(r.created_at),usedAt:r.used_at==null?null:Number(r.used_at),printed:!!r.printed,shared:!!r.shared,activeToken:r.active_token||'',tokenUpdatedAt:r.token_updated_at||null}; },
-    get shareCount(){ return this.tickets.filter(t=>this.sel[t.number]&&!t.shared&&!t.printed&&t.status==='Unused').length; },
+    get shareCount(){ return this.selCount; },
     errMsg(e){ return e.code==='PGRST205'||/does not exist|schema cache/i.test(e.message||'')?'Cloud table not found. Run the setup SQL in your Supabase project.':(e.message||'Sync failed'); },
 
     queue(o){ this.pending.push(o); this.save(PQ,this.pending); this.flush(); },
@@ -1295,7 +1309,7 @@ function app(){
       else if(o.op==='shared') for(const c of ch(o.tokens||[],100)) for(const row of c) ck(await t.update({shared:true,active_token:row.activeToken,token_updated_at:row.tokenUpdatedAt}).eq('number',row.number).eq('status','Unused'));
     },
     patchTicket(t){ this.queue({op:'patch',number:t.number,buyer:t.buyer||''}); },
-    applyRemote(r){ if(!r||!this.validNumber(r.number)) return; const n=this.fromRow(r), l=this.tickets.find(x=>x.number===n.number); if(l) Object.assign(l,n); else this.tickets.push(n); if(n.shared||n.printed) delete this.sel[n.number]; },
+    applyRemote(r){ if(!r||!this.validNumber(r.number)) return; const n=this.fromRow(r), l=this.tickets.find(x=>x.number===n.number); if(l) Object.assign(l,n); else this.tickets.push(n); if(n.shared||n.printed||n.status==='Used') delete this.sel[n.number]; },
     onRemote(p){
       if(p.eventType==='DELETE') this.tickets=this.tickets.filter(x=>x.number!==p.old.number);
       else if(p.new) this.applyRemote(p.new);
@@ -1450,8 +1464,7 @@ function app(){
       }catch(e){}
     },
     async shareSelected(){
-      const picked=this.tickets.filter(t=>this.sel[t.number]&&!t.shared&&t.status==='Unused'), chosen=picked.filter(t=>!t.printed);
-      if(picked.length>chosen.length) alert((picked.length-chosen.length)+' selected ticket(s) were already printed and were skipped, so no ticket exists in both paper and digital form.');
+      const chosen=this.tickets.filter(t=>this.sel[t.number]&&this.printable(t));
       if(!chosen.length) return;
       if(chosen.length>8){ alert('You can share a maximum of 8 tickets at once.'); return; }
       const links=chosen.map(t=>`${t.number}: ${this.link(t)}`).join('\n');
