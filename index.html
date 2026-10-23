@@ -333,12 +333,15 @@
     </div>
     <div class="flex flex-wrap items-end gap-4">
       <label class="lbl font-medium text-stone-700">Tickets per Sheet
-        <select x-model.number="perSheet" class="inp mt-1.5 w-32">
+        <select x-model.number="perSheet" class="inp mt-1.5 w-56" @change="if(perSheet==='custom'){ const v=parseInt(prompt('How many tickets per page? (1 to 12)','5'),10); perSheet=(v>=1&&v<=12)?v:3; }">
           <option value="2">2 per page (extra long)</option>
           <option value="3">3 per page (long tickets)</option>
           <option value="4">4 per page</option>
+          <option value="5">5 per page (long tickets)</option>
           <option value="6">6 per page</option>
           <option value="8">8 per page</option>
+          <template x-if="![2,3,4,5,6,8].includes(perSheet)&&perSheet!=='custom'"><option :value="perSheet" x-text="perSheet+' per page (custom)'"></option></template>
+          <option value="custom">Custom number…</option>
         </select>
       </label>
       <label class="lbl font-medium text-stone-700">Paper Format
@@ -1153,7 +1156,7 @@ function app(){
     printTickets(list,force){
       list=list.filter(t=>!t.shared&&(force||!t.printed));
       if(!list.length||!this.can('tickets')) return;
-      const n=this.perSheet, r=this.ratio, cols=(n<=3||(n===4&&r>=1.5))?1:2, rows=Math.ceil(n/cols), mh=((this.paper==='A4'?255:240)-(rows-1)*4)/rows, mw=(190-(cols-1)*4)/cols, L=[cols,Math.floor(Math.min(mw,mh*r))];
+      const n=this.perSheet, r=this.ratio, cols=(n<=3||n===5||(n===4&&r>=1.5))?1:2, rows=Math.ceil(n/cols), mh=((this.paper==='A4'?255:240)-(rows-1)*4)/rows, mw=(190-(cols-1)*4)/cols, L=[cols,Math.floor(Math.min(mw,mh*r))];
       let h='';
       for(let i=0;i<list.length;i+=n)
         h+=`<section class="sheet" style="grid-template-columns:repeat(${L[0]},${L[1]}mm)">`+list.slice(i,i+n).map(t=>`<div class="cell">${this.ticketHTML(t,false)}</div>`).join('')+'</section>';
