@@ -491,7 +491,8 @@
   <!-- Cloud setup SQL -->
   <details class="card bg-white shadow-sm border border-stone-200 p-5 rounded-xl">
     <summary class="cursor-pointer font-bold text-stone-800 text-sm">Cloud setup: run this in the Supabase SQL editor (safe to re-run)</summary>
-    <pre x-ref="sql" class="mt-3 bg-stone-900 text-stone-100 text-[11px] leading-relaxed rounded-lg p-3 overflow-x-auto max-h-96 overflow-y-auto">create extension if not exists pgcrypto with schema extensions;
+    <pre x-ref="sql" class="mt-3 bg-stone-900 text-stone-100 text-[11px] leading-relaxed rounded-lg p-3 overflow-x-auto max-h-96 overflow-y-auto">begin;
+create extension if not exists pgcrypto with schema extensions;
 
 -- 0. CLEANUP: drop EVERY overloaded copy of the app functions so PostgREST can never be ambiguous
 do $$ declare r record; begin
@@ -772,7 +773,42 @@ drop trigger if exists tickets_guard_trg on public.tickets;
 create trigger tickets_guard_trg before update on public.tickets for each row execute function public.tickets_guard();
 alter table public.tickets replica identity full;
 
+-- make sure the app (anon / logged-in browsers) is allowed to call every function
+grant execute on function public.reserve_seq(text,text,integer) to anon, authenticated;
+grant execute on function public.purge_tickets(text) to anon, authenticated;
+grant execute on function public.delete_tickets(text,text[]) to anon, authenticated;
+grant execute on function public.digital_ticket(text,text) to anon, authenticated;
+grant execute on function public.ticket_live(text,text) to anon, authenticated;
+grant execute on function public.ticket_heartbeat(text,text) to anon, authenticated;
+grant execute on function public.gate_scan(text,text,text,text,boolean) to anon, authenticated;
+grant execute on function public.reset_scans(text) to anon, authenticated;
+grant execute on function public._gate(text) to anon, authenticated;
+grant execute on function public._admin(text) to anon, authenticated;
+grant execute on function public._staff(text) to anon, authenticated;
+grant execute on function public.request_ticket(text,text) to anon, authenticated;
+grant execute on function public.public_design() to anon, authenticated;
+grant execute on function public.save_design(text,jsonb) to anon, authenticated;
+grant execute on function public.app_login(text,text) to anon, authenticated;
+grant execute on function public.app_whoami(text) to anon, authenticated;
+grant execute on function public.app_logout(text) to anon, authenticated;
+grant execute on function public.staff_create(text,text,text,text) to anon, authenticated;
+grant execute on function public.staff_delete(text,text) to anon, authenticated;
+grant execute on function public.staff_password(text,text,text) to anon, authenticated;
+
+-- self-check: if anything is missing the WHOLE script is rolled back and this message says what
+do $$ declare x text; missing text := ''; begin
+  foreach x in array array['public.reserve_seq(text,text,integer)','public.purge_tickets(text)','public.delete_tickets(text,text[])','public.digital_ticket(text,text)','public.ticket_live(text,text)','public.ticket_heartbeat(text,text)','public.gate_scan(text,text,text,text,boolean)','public.reset_scans(text)','public._gate(text)','public._admin(text)','public._staff(text)','public.request_ticket(text,text)','public.public_design()','public.save_design(text,jsonb)','public.app_login(text,text)','public.app_whoami(text)','public.app_logout(text)','public.staff_create(text,text,text,text)','public.staff_delete(text,text)','public.staff_password(text,text,text)'] loop
+    if to_regprocedure(x) is null then missing := missing || x || ' '; end if;
+  end loop;
+  if to_regclass('public.gate_scans') is null or to_regclass('public.ticket_heartbeats') is null then missing := missing || '[tables] '; end if;
+  if not exists (select 1 from pg_trigger where tgname = 'tickets_guard_trg' and not tgisinternal) then missing := missing || '[trigger] '; end if;
+  if missing &lt;&gt; '' then raise exception 'SETUP INCOMPLETE, missing: %', missing; end if;
+end $$;
+
 notify pgrst, 'reload schema';
+commit;
+
+select 'OK - Gatekeeper database is fully installed' as status;
 </pre>
     <button class="btn-dark text-xs mt-3" @click="navigator.clipboard.writeText($refs.sql.textContent); alert('SQL copied')">Copy SQL</button>
   </details>
@@ -1288,20 +1324,22 @@ function app(){
       let number='', code='';
       if(manual) number=norm(raw);
       else{ const p=raw.split('|'); if(p[0]==='TKT'){ number=norm(p[1]); code=p.slice(2).join('|').trim().toUpperCase(); } }
-      let res=null;
+      let res=null, srv=null;
       if(number){
         const scanId=this.rnd(24);   // same id on every retry of THIS scan, so the server never records it twice
         for(let a=0;a<3&&!res;a++){
           try{
             const r=await Promise.race([sb.rpc('gate_scan',{p_token:this.user.token,p_number:number,p_code:code,p_scan_id:scanId,p_manual:!!manual}),new Promise((_,j)=>setTimeout(()=>j(new Error('timeout')),7000))]);
             if(!r.error&&r.data&&typeof r.data==='object'&&typeof r.data.ok==='boolean') res=r.data;
+            else if(r.error&&r.error.code){ srv={code:r.error.code,missing:r.error.code==='PGRST202'||r.status===404}; console.warn('gate_scan error',r.error); if(srv.missing) break; }
           }catch(e){}
           if(!res&&a<2) await new Promise(f=>setTimeout(f,700));
         }
       }
+      if(!res&&srv&&srv.missing){ console.warn('gate_scan is not installed: using the older scan path. Run the latest supabase-setup.sql.'); this.locked=false; return this.onScanLocal(text,manual); }
       const info=r=>({number:r.number,tier:r.tier,buyer:r.buyer||'',printed:!!r.printed,shared:!!r.shared});
       if(!number) this.result={ok:false,title:'INVALID / FAKE TICKET',detail:'ACCESS DENIED — THIS IS NOT A VALID TICKET CODE'};
-      else if(!res) this.result={ok:false,title:'CAN\'T VERIFY — NOT ADMITTED',detail:'NO CONFIRMATION FROM THE SERVER. THE TICKET WAS NOT ACCEPTED. CHECK SIGNAL AND SCAN AGAIN'};
+      else if(!res) this.result={ok:false,title:'CAN\'T VERIFY — NOT ADMITTED',detail:srv?('SERVER ERROR ('+srv.code+'). THE TICKET WAS NOT ACCEPTED. TELL THE ADMIN.'):'NO CONFIRMATION FROM THE SERVER. THE TICKET WAS NOT ACCEPTED. CHECK SIGNAL AND SCAN AGAIN'};
       else if(res.ok===true){
         const lt=this.tickets.find(x=>x.number===res.number); if(lt){ lt.status='Used'; lt.usedAt=Number(res.used_at); }
         this.result={ok:true,title:'VALID TICKET - ENTRY ALLOWED',detail:res.printed?'ENTRY ALLOWED · ALREADY PRINTED — DO NOT PRINT A DUPLICATE':'ENTRY ALLOWED',t:{...info(res),status:'Used',usedAt:Number(res.used_at)}};
