@@ -496,7 +496,7 @@
 -- 0. CLEANUP: drop EVERY overloaded copy of the app functions so PostgREST can never be ambiguous
 do $$ declare r record; begin
   for r in select p.oid::regprocedure as sig from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-    where n.nspname = 'public' and p.proname in ('reserve_seq','purge_tickets','delete_tickets','digital_ticket','ticket_live','ticket_heartbeat','request_ticket','public_design','save_design','app_login','app_whoami','app_logout','staff_create','staff_delete','staff_password','_admin','_staff')
+    where n.nspname = 'public' and p.proname in ('reserve_seq','purge_tickets','delete_tickets','digital_ticket','ticket_live','ticket_heartbeat','gate_scan','reset_scans','_gate','request_ticket','public_design','save_design','app_login','app_whoami','app_logout','staff_create','staff_delete','staff_password','_admin','_staff')
   loop execute 'drop function if exists ' || r.sig || ' cascade'; end loop;
 end $$;
 
@@ -543,6 +543,15 @@ create table if not exists public.ticket_heartbeats (
   last_seen timestamptz not null default now()
 );
 alter table public.ticket_heartbeats enable row level security;
+
+-- one row per gate scan attempt: makes retries idempotent (same scan id always returns the same verdict)
+create table if not exists public.gate_scans (
+  scan_id text primary key,
+  number text not null,
+  result json not null,
+  created_at timestamptz not null default now()
+);
+alter table public.gate_scans enable row level security;
 
 -- staff accounts: passwords are stored only as bcrypt hashes in a table anon cannot read
 create table if not exists public.users (
@@ -658,6 +667,53 @@ begin
   end if;
   return json_build_object('success', true, 'valid', true, 'number', v.number, 'tier', v.tier, 'buyer', v.buyer, 'status', v.status, 'shared', v.shared, 'used_at', v.used_at, 'heartbeat_age', v_age);
 end $$;
+-- any logged-in staff role (admin, producer, gatekeeper) may scan
+create or replace function public._gate(p_token text) returns boolean language sql security definer set search_path = public as $$
+  select exists (select 1 from sessions s join users u using (username) where s.token = p_token and u.role in ('admin','producer','gatekeeper')) $$;
+
+-- THE ONLY way a ticket becomes Used. Check and update happen in one locked transaction; a failure of any kind leaves the ticket untouched.
+create or replace function public.gate_scan(p_token text, p_number text, p_code text, p_scan_id text, p_manual boolean default false) returns json language plpgsql security definer set search_path = public as $$
+declare v record; v_age numeric; v_ttl int := 23; v_cur text;
+  num text := upper(trim(coalesce(p_number, ''))); cd text := upper(trim(coalesce(p_code, '')));
+  res json; ms bigint := (extract(epoch from now()) * 1000)::bigint;
+begin
+  if not _gate(p_token) then return json_build_object('ok', false, 'code', 'NOT_ALLOWED', 'message', 'Not allowed'); end if;
+  if nullif(trim(p_scan_id), '') is null then return json_build_object('ok', false, 'code', 'BAD_REQUEST', 'message', 'Bad request'); end if;
+  select g.result into res from gate_scans g where g.scan_id = p_scan_id;
+  if found then return res; end if;   -- retry of the same scan: return the same verdict
+  select t.* into v from tickets t where t.number = num for update;
+  if not found then
+    res := json_build_object('ok', false, 'code', 'NOT_FOUND', 'message', 'Ticket Not Found');
+  else
+    v_cur := upper(case when v.shared then coalesce(v.active_token, '') else coalesce(nullif(v.code, ''), v.salt, '') end);
+    if not coalesce(p_manual, false) and (cd = '' or v_cur = '' or cd &lt;&gt; v_cur) then
+      res := json_build_object('ok', false, 'code', 'INVALID', 'message', 'Invalid Ticket');
+    elsif v.status = 'Used' then
+      res := json_build_object('ok', false, 'code', 'ALREADY_USED', 'message', 'Ticket Already Used', 'number', v.number, 'tier', v.tier, 'used_at', v.used_at);
+    else
+      if v.shared then select extract(epoch from (now() - h.last_seen)) into v_age from ticket_heartbeats h where h.number = v.number; end if;
+      if v.shared and (v_age is null or v_age &gt; v_ttl) then
+        res := json_build_object('ok', false, 'code', 'EXPIRED', 'message', 'Ticket Expired / Inactive Session', 'number', v.number, 'tier', v.tier);
+      else
+        perform set_config('app.gate_scan', '1', true);
+        update tickets set status = 'Used', used_at = ms where number = v.number;
+        res := json_build_object('ok', true, 'code', 'VALID', 'message', 'Valid', 'number', v.number, 'tier', v.tier, 'buyer', v.buyer, 'printed', v.printed, 'shared', v.shared, 'used_at', ms);
+      end if;
+    end if;
+  end if;
+  insert into gate_scans (scan_id, number, result) values (p_scan_id, num, res) on conflict (scan_id) do nothing;
+  if random() &lt; 0.01 then delete from gate_scans where created_at &lt; now() - interval '2 days'; end if;
+  return res;
+end $$;
+
+-- admin only: clear every Used mark (the Reset button)
+create or replace function public.reset_scans(p_token text) returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not _admin(p_token) then raise exception 'Not allowed'; end if;
+  perform set_config('app.allow_reset', '1', true);
+  update tickets set status = 'Unused', used_at = null where status = 'Used';
+  delete from gate_scans;
+end $$;
 -- called every 8s by an open digital ticket page
 create or replace function public.ticket_heartbeat(p_number text, p_code text) returns json language plpgsql security definer set search_path = public as $$
 declare v record;
@@ -703,6 +759,13 @@ create or replace function public.tickets_guard() returns trigger language plpgs
 begin
   new.shared  := coalesce(old.shared, false) or coalesce(new.shared, false);
   new.printed := coalesce(old.printed, false) or (coalesce(new.printed, false) and not coalesce(old.shared, false));
+  -- A ticket can become Used ONLY inside gate_scan() after every check passed, and can only go back to Unused through reset_scans().
+  if coalesce(old.status,'Unused') &lt;&gt; 'Used' and new.status = 'Used' and coalesce(current_setting('app.gate_scan', true), '') &lt;&gt; '1' then
+    new.status := old.status; new.used_at := old.used_at;
+  end if;
+  if old.status = 'Used' and new.status &lt;&gt; 'Used' and coalesce(current_setting('app.allow_reset', true), '') &lt;&gt; '1' then
+    new.status := old.status; new.used_at := old.used_at;
+  end if;
   return new;
 end $$;
 drop trigger if exists tickets_guard_trg on public.tickets;
@@ -1214,7 +1277,43 @@ function app(){
     },
     async stopScan(){ if(!this.scanner) return; const s=this.scanner; this.scanner=null; try{ await s.stop(); s.clear(); }catch(e){} },
 
+    /* Cloud mode: the DATABASE decides and records the scan in one atomic step (gate_scan).
+       Only an explicit ok:true from the server shows green. Everything else is red and the ticket is never marked Used. */
     async onScan(text,manual){
+      if(!sb) return this.onScanLocal(text,manual);
+      if(!this.can('gate')||this.locked||!String(text||'').trim()) return;
+      this.locked=true;
+      const raw=String(text).trim();
+      const norm=v=>{ const m=String(v||'').trim().toUpperCase().match(/^(GEN|VIP|TABLE)-?(\d+)$/); return m?`${m[1]}-${m[2].padStart(4,'0')}`:''; };
+      let number='', code='';
+      if(manual) number=norm(raw);
+      else{ const p=raw.split('|'); if(p[0]==='TKT'){ number=norm(p[1]); code=p.slice(2).join('|').trim().toUpperCase(); } }
+      let res=null;
+      if(number){
+        const scanId=this.rnd(24);   // same id on every retry of THIS scan, so the server never records it twice
+        for(let a=0;a<3&&!res;a++){
+          try{
+            const r=await Promise.race([sb.rpc('gate_scan',{p_token:this.user.token,p_number:number,p_code:code,p_scan_id:scanId,p_manual:!!manual}),new Promise((_,j)=>setTimeout(()=>j(new Error('timeout')),7000))]);
+            if(!r.error&&r.data&&typeof r.data==='object'&&typeof r.data.ok==='boolean') res=r.data;
+          }catch(e){}
+          if(!res&&a<2) await new Promise(f=>setTimeout(f,700));
+        }
+      }
+      const info=r=>({number:r.number,tier:r.tier,buyer:r.buyer||'',printed:!!r.printed,shared:!!r.shared});
+      if(!number) this.result={ok:false,title:'INVALID / FAKE TICKET',detail:'ACCESS DENIED — THIS IS NOT A VALID TICKET CODE'};
+      else if(!res) this.result={ok:false,title:'CAN\'T VERIFY — NOT ADMITTED',detail:'NO CONFIRMATION FROM THE SERVER. THE TICKET WAS NOT ACCEPTED. CHECK SIGNAL AND SCAN AGAIN'};
+      else if(res.ok===true){
+        const lt=this.tickets.find(x=>x.number===res.number); if(lt){ lt.status='Used'; lt.usedAt=Number(res.used_at); }
+        this.result={ok:true,title:'VALID TICKET - ENTRY ALLOWED',detail:res.printed?'ENTRY ALLOWED · ALREADY PRINTED — DO NOT PRINT A DUPLICATE':'ENTRY ALLOWED',t:{...info(res),status:'Used',usedAt:Number(res.used_at)}};
+      }
+      else if(res.code==='ALREADY_USED') this.result={ok:false,title:'TICKET ALREADY USED',detail:'ALREADY SCANNED AT '+this.fmt(Number(res.used_at)),t:info(res)};
+      else if(res.code==='EXPIRED') this.result={ok:false,title:'TICKET EXPIRED / INACTIVE SESSION',detail:'ACCESS DENIED — NO LIVE TICKET PAGE DETECTED (SCREENSHOT OR CLOSED TAB)'};
+      else if(res.code==='NOT_ALLOWED') this.result={ok:false,title:'NOT ALLOWED',detail:'THIS ACCOUNT CANNOT SCAN. LOG IN AGAIN.'};
+      else this.result={ok:false,title:'INVALID / FAKE TICKET',detail:'ACCESS DENIED — QR CODE IS INVALID OR NOT FOUND'};
+      this.beep(this.result.ok);
+      if(navigator.vibrate) navigator.vibrate(this.result.ok?120:[200,100,200]);
+    },
+    async onScanLocal(text,manual){
       if(!this.can('gate')||this.locked||!String(text||'').trim()) return;
       this.locked=true; let t=null, scannedCode='', denied='', why='', soft=false;
       const raw=String(text).trim();
@@ -1322,7 +1421,7 @@ function app(){
       else if(o.op==='claim') ck(await t.update({status:'Used',used_at:o.usedAt}).eq('number',o.number).eq('status','Unused'));
       else if(o.op==='printed') for(const c of ch(o.numbers,100)) ck(await t.update({printed:true}).in('number',c));
       else if(o.op==='delete') for(const c of ch(o.numbers,100)) ck(await sb.rpc('delete_tickets',{p_token:this.user.token,p_numbers:c}));
-      else if(o.op==='reset') ck(await t.update({status:'Unused',used_at:null}).neq('status','Unused'));
+      else if(o.op==='reset') ck(await sb.rpc('reset_scans',{p_token:this.user.token}));
       else if(o.op==='purge') ck(await sb.rpc('purge_tickets',{p_token:this.user.token}));
       else if(o.op==='insert') for(const c of ch(o.rows,500)) ck(await t.upsert(c.map(r=>this.toRow(r)),{onConflict:'number',ignoreDuplicates:true}));
       else if(o.op==='shared') for(const c of ch(o.tokens||[],100)) for(const row of c) ck(await t.update({shared:true,active_token:row.activeToken,token_updated_at:row.tokenUpdatedAt}).eq('number',row.number).eq('status','Unused'));
