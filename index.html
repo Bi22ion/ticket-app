@@ -544,6 +544,10 @@ create table if not exists public.ticket_heartbeats (
   last_seen timestamptz not null default now()
 );
 alter table public.ticket_heartbeats enable row level security;
+-- rotating QR: the token printed in a live ticket's QR changes with every heartbeat; old ones are remembered only so they can be reported as expired
+alter table public.ticket_heartbeats add column if not exists token text;
+alter table public.ticket_heartbeats add column if not exists prev_token text;
+alter table public.ticket_heartbeats add column if not exists hist text[] not null default '{}';
 
 -- one row per gate scan attempt: makes retries idempotent (same scan id always returns the same verdict)
 create table if not exists public.gate_scans (
@@ -654,15 +658,16 @@ begin
 end $$;
 -- live gate check. Digital (shared) tickets must have a heartbeat within the last 23 seconds; paper tickets skip that rule.
 create or replace function public.ticket_live(p_number text, p_code text) returns json language plpgsql security definer set search_path = public as $$
-declare v record; v_ttl int := 23; v_age numeric;
+declare v record; h record; c text := upper(trim(coalesce(p_code, ''))); v_ttl int := 23; v_age numeric;
 begin
-  select t.* into v from tickets t where t.number = upper(trim(p_number))
-    and (nullif(trim(p_code), '') is null or upper(coalesce(t.active_token,'')) = upper(trim(p_code)) or upper(coalesce(t.salt,'')) = upper(trim(p_code)) or upper(coalesce(t.code,'')) = upper(trim(p_code)));
+  select t.* into v from tickets t where t.number = upper(trim(p_number));
   if not found then return json_build_object('success', false, 'message', 'Ticket Not Found'); end if;
   if v.status = 'Used' then return json_build_object('success', false, 'message', 'Ticket Already Used', 'number', v.number, 'status', v.status, 'used_at', v.used_at); end if;
   if v.shared then
-    select extract(epoch from (now() - h.last_seen)) into v_age from ticket_heartbeats h where h.number = v.number;
-    if v_age is null or v_age &gt; v_ttl then
+    select * into h from ticket_heartbeats where number = v.number;
+    if h.number is null then return json_build_object('success', false, 'stale', true, 'message', 'Ticket Expired / Inactive Session', 'number', v.number); end if;
+    v_age := extract(epoch from (now() - h.last_seen));
+    if (c &lt;&gt; '' and c &lt;&gt; upper(coalesce(h.token, '')) and c &lt;&gt; upper(coalesce(h.prev_token, ''))) or v_age &gt; v_ttl then
       return json_build_object('success', false, 'stale', true, 'message', 'Ticket Expired / Inactive Session', 'number', v.number);
     end if;
   end if;
@@ -674,26 +679,45 @@ create or replace function public._gate(p_token text) returns boolean language s
 
 -- THE ONLY way a ticket becomes Used. Check and update happen in one locked transaction; a failure of any kind leaves the ticket untouched.
 create or replace function public.gate_scan(p_token text, p_number text, p_code text, p_scan_id text, p_manual boolean default false) returns json language plpgsql security definer set search_path = public as $$
-declare v record; v_age numeric; v_ttl int := 23; v_cur text;
+declare v record; h record; v_age numeric; v_ttl int := 23; v_cur text;
   num text := upper(trim(coalesce(p_number, ''))); cd text := upper(trim(coalesce(p_code, '')));
   res json; ms bigint := (extract(epoch from now()) * 1000)::bigint;
 begin
   if not _gate(p_token) then return json_build_object('ok', false, 'code', 'NOT_ALLOWED', 'message', 'Not allowed'); end if;
   if nullif(trim(p_scan_id), '') is null then return json_build_object('ok', false, 'code', 'BAD_REQUEST', 'message', 'Bad request'); end if;
   select g.result into res from gate_scans g where g.scan_id = p_scan_id;
-  if found then return res; end if;   -- retry of the same scan: return the same verdict
+  if found then return res; end if;   -- retry of the same scan: same verdict
+  res := null;
   select t.* into v from tickets t where t.number = num for update;
   if not found then
     res := json_build_object('ok', false, 'code', 'NOT_FOUND', 'message', 'Ticket Not Found');
   else
-    v_cur := upper(case when v.shared then coalesce(v.active_token, '') else coalesce(nullif(v.code, ''), v.salt, '') end);
-    if not coalesce(p_manual, false) and (cd = '' or v_cur = '' or cd &lt;&gt; v_cur) then
-      res := json_build_object('ok', false, 'code', 'INVALID', 'message', 'Invalid Ticket');
-    elsif v.status = 'Used' then
-      res := json_build_object('ok', false, 'code', 'ALREADY_USED', 'message', 'Ticket Already Used', 'number', v.number, 'tier', v.tier, 'used_at', v.used_at);
-    else
-      if v.shared then select extract(epoch from (now() - h.last_seen)) into v_age from ticket_heartbeats h where h.number = v.number; end if;
-      if v.shared and (v_age is null or v_age &gt; v_ttl) then
+    if v.shared then
+      select * into h from ticket_heartbeats where number = v.number;
+      if h.number is not null then v_age := extract(epoch from (now() - h.last_seen)); end if;
+    end if;
+    if not coalesce(p_manual, false) then
+      if v.shared then
+        if cd = '' then
+          res := json_build_object('ok', false, 'code', 'INVALID', 'message', 'Invalid Ticket');
+        elsif h.number is not null and (cd = upper(coalesce(h.token, '')) or cd = upper(coalesce(h.prev_token, ''))) then
+          null;   -- current QR token: accepted so far
+        elsif cd = upper(coalesce(v.active_token, '')) or cd = any (coalesce(h.hist, '{}'::text[])) then
+          res := json_build_object('ok', false, 'code', 'EXPIRED', 'message', 'Ticket Expired / Inactive Session', 'number', v.number, 'tier', v.tier);
+        else
+          res := json_build_object('ok', false, 'code', 'INVALID', 'message', 'Invalid Ticket');
+        end if;
+      else
+        v_cur := upper(coalesce(nullif(v.code, ''), v.salt, ''));
+        if cd = '' or v_cur = '' or cd &lt;&gt; v_cur then
+          res := json_build_object('ok', false, 'code', 'INVALID', 'message', 'Invalid Ticket');
+        end if;
+      end if;
+    end if;
+    if res is null then
+      if v.status = 'Used' then
+        res := json_build_object('ok', false, 'code', 'ALREADY_USED', 'message', 'Ticket Already Used', 'number', v.number, 'tier', v.tier, 'used_at', v.used_at);
+      elsif v.shared and (h.number is null or v_age is null or v_age &gt; v_ttl) then
         res := json_build_object('ok', false, 'code', 'EXPIRED', 'message', 'Ticket Expired / Inactive Session', 'number', v.number, 'tier', v.tier);
       else
         perform set_config('app.gate_scan', '1', true);
@@ -715,18 +739,35 @@ begin
   update tickets set status = 'Unused', used_at = null where status = 'Used';
   delete from gate_scans;
 end $$;
--- called every 8s by an open digital ticket page
-create or replace function public.ticket_heartbeat(p_number text, p_code text) returns json language plpgsql security definer set search_path = public as $$
-declare v record;
+-- called every 8s by an open digital ticket page: proves the page is alive and rotates the QR token
+create or replace function public.ticket_heartbeat(p_number text, p_code text) returns json language plpgsql security definer set search_path = public, extensions as $$
+declare v record; h record; c text := upper(trim(coalesce(p_code, ''))); nt text;
 begin
-  if nullif(trim(p_code), '') is null then return json_build_object('ok', false); end if;
-  select t.number, t.status into v from tickets t where t.number = upper(trim(p_number))
-    and (upper(coalesce(t.active_token,'')) = upper(trim(p_code)) or upper(coalesce(t.salt,'')) = upper(trim(p_code)) or upper(coalesce(t.code,'')) = upper(trim(p_code)));
+  if c = '' then return json_build_object('ok', false); end if;
+  select t.number, t.status, t.shared, t.printed, t.active_token, t.salt, t.code into v from tickets t where t.number = upper(trim(p_number));
   if not found then return json_build_object('ok', false); end if;
-  if v.status = 'Unused' then
-    insert into ticket_heartbeats (number, last_seen) values (v.number, now()) on conflict (number) do update set last_seen = now();
+  if v.status &lt;&gt; 'Unused' then return json_build_object('ok', false, 'status', v.status); end if;
+  select * into h from ticket_heartbeats where number = v.number;
+  nt := upper(encode(gen_random_bytes(12), 'hex'));
+  if h.number is not null and h.token is not null and c = upper(h.token) then
+    -- normal beat: rotate the QR token, keep the old one for one beat so a scan in flight still counts
+    update ticket_heartbeats set prev_token = h.token, token = nt, last_seen = now(),
+      hist = (select array_agg(x) from (select x from unnest(array_append(coalesce(h.hist, '{}'::text[]), upper(h.token))) with ordinality u(x, i) order by i desc limit 30) s)
+      where number = v.number;
+    return json_build_object('ok', true, 'token', nt, 'shared', true, 'status', 'Unused');
+  elsif h.number is not null and h.prev_token is not null and c = upper(h.prev_token) then
+    -- the previous reply was lost on the way: refresh the beat and hand back the current token
+    update ticket_heartbeats set last_seen = now() where number = v.number;
+    return json_build_object('ok', true, 'token', h.token, 'shared', true, 'status', 'Unused');
+  elsif c = upper(coalesce(v.active_token, '')) or c = upper(coalesce(v.salt, '')) or c = upper(coalesce(v.code, '')) then
+    -- opening the ticket link starts a live session. Any ticket shown on a live page is a digital ticket.
+    if v.printed and not v.shared then return json_build_object('ok', false, 'status', 'Unused'); end if;
+    if not v.shared then update tickets set shared = true, active_token = coalesce(active_token, nt) where number = v.number; end if;
+    insert into ticket_heartbeats (number, token, prev_token, hist, last_seen) values (v.number, nt, null, array[c], now())
+      on conflict (number) do update set token = nt, prev_token = ticket_heartbeats.token, hist = array_append(coalesce(ticket_heartbeats.hist, '{}'::text[]), c), last_seen = now();
+    return json_build_object('ok', true, 'token', nt, 'shared', true, 'status', 'Unused');
   end if;
-  return json_build_object('ok', v.status = 'Unused', 'status', v.status);
+  return json_build_object('ok', false, 'status', v.status);
 end $$;
 create or replace function public.purge_tickets(p_token text) returns void language plpgsql security definer set search_path = public as $$
 begin
@@ -1701,7 +1742,7 @@ function app(){
         // The number is authoritative. The URL suffix is only a compatibility hint;
         // stale or differently-cased suffixes must never make an existing ticket disappear.
         this.gt=this.fromRow(r.data); this.gState=this.gt.status==='Used'?'USED':'OK'; this.gErr='';
-        this.gPayload=`TKT|${this.gt.number}|${this.gt.shared&&this.gt.activeToken?this.gt.activeToken:this.gt.code}`;
+        this.gPayload=`TKT|${this.gt.number}|${this.hbToken||(this.gt.shared&&this.gt.activeToken?this.gt.activeToken:this.gt.code)}`;
         this.gTtl=30; this.gSeconds=this.gTtl; this.gTtlPercent=100;
         clearInterval(this.gTimer); this.gTimer=setInterval(()=>{this.gSeconds=Math.max(0,this.gSeconds-1);this.gTtlPercent=this.gTtl?this.gSeconds/this.gTtl*100:0;},1000);
       }catch(e){
@@ -1712,11 +1753,19 @@ function app(){
 
     /* heartbeat: proves a live page is open. A screenshot is frozen and cannot send it. */
     async sendHeartbeat(){
-      if(!sb||!this.guest||!this.gt||!navigator.onLine||document.hidden||this.gt.status==='Used') return;
+      if(!sb||!this.guest||!this.gt||!navigator.onLine||document.hidden||this.gt.status==='Used'||this.hbBusy) return;
+      this.hbBusy=true;
       try{
-        const r=await sb.rpc('ticket_heartbeat',{p_number:this.guest.number,p_code:this.guest.code||this.gt.code});
-        if(!r.error&&r.data&&r.data.status==='Used'){ this.gt.status='Used'; this.gState='USED'; }
+        const cred=this.hbToken||(this.gt.shared&&this.gt.activeToken?this.gt.activeToken:this.gt.code);
+        const r=await sb.rpc('ticket_heartbeat',{p_number:this.gt.number,p_code:cred});
+        if(!r.error&&r.data){
+          const d=r.data;
+          if(d.ok&&d.token){ this.hbToken=d.token; this.gPayload=`TKT|${this.gt.number}|${d.token}`; if(d.shared&&!this.gt.shared) this.gt.shared=true; }
+          else if(d.status==='Used'){ this.gt.status='Used'; this.gState='USED'; }
+          else if(this.hbToken){ this.hbToken=''; }
+        }
       }catch(e){}
+      this.hbBusy=false;
     },
     async rotateGuestToken(){
       if(!sb||!this.gt||!this.gt.shared||this.gt.status==='Used'||!navigator.onLine) return;
