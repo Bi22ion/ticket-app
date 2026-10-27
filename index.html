@@ -180,6 +180,18 @@
             <input type="range" min="0" max="360" x-model.number="tpl.gAngle"></label>
         </div>
         <label class="dlbl">Base colour <input type="color" x-model="tpl.bgColor" class="mt-1 h-9 w-full rounded"></label>
+        <div class="space-y-2 border-t border-stone-700 pt-3">
+          <div class="dlbl">Tier colours (each tier gets its own background)</div>
+          <template x-for="k in ['GEN','VIP','TABLE']" :key="k">
+            <div class="flex items-center gap-2"><span class="dlbl w-14" x-text="k"></span>
+              <input type="color" :value="(tpl.tierColors||{})[k]" @input="tpl.tierColors={...(tpl.tierColors||{}),[k]:$event.target.value}" class="h-9 flex-1 rounded" :aria-label="k+' colour'"></div>
+          </template>
+          <label class="dlbl">Colour strength <span class="float-right text-stone-300" x-text="Math.round((tpl.tierOp??.92)*100)+'%'"></span>
+            <input type="range" min="0" max="1" step="0.05" x-model.number="tpl.tierOp"></label>
+          <label class="dlbl">Colour starts at <span class="float-right text-stone-300" x-text="(tpl.tierFrom??62)+'% from left'"></span>
+            <input type="range" min="0" max="100" step="1" x-model.number="tpl.tierFrom"></label>
+          <div class="text-[11px] text-stone-400">Strength 0% turns tier colours off. Set "starts at" to 0 to colour the whole ticket. On a black-and-white printer pick tiers with clearly different brightness.</div>
+        </div>
       </div>
 
       <!-- Type -->
@@ -898,6 +910,7 @@ function app(){
   const FONTS={'Montserrat':"Montserrat,system-ui,sans-serif",'Poppins':"Poppins,system-ui,sans-serif",'Inter':"Inter,system-ui,sans-serif",'Oswald':"Oswald,Impact,sans-serif",'Playfair Display':"'Playfair Display',Georgia,serif",'Cinzel':"Cinzel,Georgia,serif",'Space Grotesk':"'Space Grotesk',system-ui,sans-serif",'Monospace':"ui-monospace,Menlo,Consolas,monospace"};
   const T0=(label,x,y,size,color,weight,font,o)=>({label,x,y,size,color,weight,font,ls:0,align:'left',transform:'none',sh:1,shc:'#000000',show:true,...o});
   const defaultTpl=()=>({bg:'https://hebbkx1anhila5yf.public.blob.vercel-storage.com/qfp-Ml4ytytXTzMrBARws7YTF4Vupb3VAP.jpeg',logo:'',bgColor:'#5a0a0f',eventTitle:'Legacy of a Queen',eventOrganizer:'Queens Events presents',eventSub:'Queen Florence · Live in Concert',eventDate:'Friday 22 January 2027',eventVenue:'Front Page Hotel, Namasuba',eventContact:'Reservations: 0764733540 / 0752222294',eventTerms:'One-time entry · Copies are void · Lost or shared tickets are not replaceable',bgX:50,bgY:50,bgScale:1,aw:2,ah:1,radius:2,shadow:55,blur:0,bgOp:.72,
+    tierColors:{GEN:'#1d4f91',VIP:'#5c4108',TABLE:'#0f5a3c'},tierOp:.92,tierFrom:62,
     gType:'linear',g1:'#7a0a12',g2:'#12030a',gAngle:135,gOp:.45,order:['organizer','title','subtitle','date','venue','tier','seat','serial','check','contact','terms','logo','qr'],
     el:{organizer:T0('Presenter',5,7,2.4,'#f6e3a1',500,'Cinzel',{transform:'uppercase',ls:.22}),
       title:T0('Event title',5,14,5.4,'#ffffff',900,'Cinzel',{transform:'uppercase',ls:.04}),
@@ -1040,6 +1053,8 @@ function app(){
       let h=`<div style="container-type:inline-size;width:100%"><div style="position:relative;aspect-ratio:${this.ratio};overflow:hidden;border-radius:${T.radius}cqw;background-color:${T.bgColor};${shadow}">`;
       if(T.bg) h+=`<div style="position:absolute;inset:0;background-image:url(${T.bg});background-size:${T.bgScale*100}%;background-position:${T.bgX}% ${T.bgY}%;background-repeat:no-repeat;opacity:${T.bgOp};${T.blur?`filter:blur(${T.blur}cqw);`:''}z-index:1"></div>`;
       if(T.gType!=='none') h+=`<div style="position:absolute;inset:0;opacity:${T.gOp};background:${T.gType==='linear'?`linear-gradient(${T.gAngle}deg,${T.g1},${T.g2})`:`radial-gradient(circle at 50% 40%,${T.g1},${T.g2})`}"></div>`;
+      const tc=(T.tierColors||{})[t.tier];
+      if(tc&&/^#[0-9a-f]{6}$/i.test(tc)&&T.tierOp>0){ const f=Math.max(0,Math.min(100,+T.tierFrom||0)); h+=`<div style="position:absolute;inset:0;z-index:2;pointer-events:none;opacity:${T.tierOp};background:linear-gradient(90deg,${tc}00 ${Math.max(0,f-6)}%,${tc} ${f}%)"></div>`; }
       T.order.forEach((k,i)=>{
         const c=E[k]; if(!c||!c.show) return;
         const text=this.isText(k); if(text&&!txt[k]) return; if(k==='logo'&&!T.logo) return;
