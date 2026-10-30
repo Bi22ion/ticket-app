@@ -609,16 +609,16 @@ do $$ begin
   end if;
 end $$;
 create unique index if not exists tickets_table_seat_uniq on public.tickets (table_no, seat_no) where table_no is not null;
-create table if not exists public.event_tables (
+create table if not exists public.seating_tables (
   table_no int primary key check (table_no between 1 and 999),
   kind text not null default 'full' check (kind in ('full','shared')),
   created_at timestamptz not null default now()
 );
-alter table public.event_tables enable row level security;
-drop policy if exists "anon read" on public.event_tables;
-create policy "anon read" on public.event_tables for select to anon using (true);
+alter table public.seating_tables enable row level security;
+drop policy if exists "anon read" on public.seating_tables;
+create policy "anon read" on public.seating_tables for select to anon using (true);
 do $$ begin
-  begin alter publication supabase_realtime add table public.event_tables; exception when duplicate_object then null; end;
+  begin alter publication supabase_realtime add table public.seating_tables; exception when duplicate_object then null; end;
 end $$;
 
 -- one row per gate scan attempt: makes retries idempotent (same scan id always returns the same verdict)
@@ -722,7 +722,7 @@ begin
     perform pg_advisory_xact_lock(hashtext('table_pick'));
     select g into tno from generate_series(1, 70) g
       where not exists (select 1 from tickets t where t.table_no = g)
-        and coalesce((select e.kind from event_tables e where e.table_no = g), 'full') = 'full'
+        and coalesce((select e.kind from seating_tables e where e.table_no = g), 'full') = 'full'
       order by g limit 1;
     if tno is null then raise exception 'No tables available'; end if;
     perform _table_issue(tno, 'full', 8, p_buyer);
@@ -822,7 +822,7 @@ end $$;
 -- table roster for the gate screen and the dashboard
 create or replace function public._table_info(p_table int) returns json language sql security definer set search_path = public as $$
   select json_build_object('table_no', p_table,
-    'kind', coalesce((select e.kind from event_tables e where e.table_no = p_table), 'full'),
+    'kind', coalesce((select e.kind from seating_tables e where e.table_no = p_table), 'full'),
     'issued', (select count(*) from tickets where table_no = p_table),
     'seated', (select count(*) from tickets where table_no = p_table and status = 'Used'),
     'seats', coalesce((select json_agg(json_build_object('seat_no', t.seat_no, 'buyer', t.buyer, 'status', t.status, 'used_at', t.used_at) order by t.seat_no) from tickets t where t.table_no = p_table), '[]'::json)) $$;
@@ -835,14 +835,14 @@ begin
   if p_table is null or p_table &lt; 1 or p_table &gt; 999 then raise exception 'Table number must be 1 to 999'; end if;
   perform pg_advisory_xact_lock(hashtext('table_' || p_table));
   perform pg_advisory_xact_lock(hashtext('seq_TABLE'));
-  select e.kind into k from event_tables e where e.table_no = p_table;
+  select e.kind into k from seating_tables e where e.table_no = p_table;
   select count(*) into used from tickets where table_no = p_table;
   if k is null then
     k := case when p_kind = 'shared' then 'shared' else 'full' end;
-    insert into event_tables (table_no, kind) values (p_table, k);
+    insert into seating_tables (table_no, kind) values (p_table, k);
   elsif p_kind in ('full', 'shared') and p_kind &lt;&gt; k then
     if used &gt; 0 then raise exception 'Table % is already a % table and has tickets', p_table, k; end if;
-    update event_tables set kind = p_kind where table_no = p_table; k := p_kind;
+    update seating_tables set kind = p_kind where table_no = p_table; k := p_kind;
   end if;
   if used &gt;= 8 then raise exception 'Table % is full: 8 of 8 tickets are already issued', p_table; end if;
   if k = 'full' then
@@ -884,7 +884,7 @@ begin
   if p_kind not in ('full', 'shared') or p_table is null or p_table &lt; 1 or p_table &gt; 999 then raise exception 'Bad request'; end if;
   perform pg_advisory_xact_lock(hashtext('table_' || p_table));
   if exists (select 1 from tickets where table_no = p_table) then raise exception 'Table % already has tickets; its type cannot change', p_table; end if;
-  insert into event_tables (table_no, kind) values (p_table, p_kind) on conflict (table_no) do update set kind = p_kind;
+  insert into seating_tables (table_no, kind) values (p_table, p_kind) on conflict (table_no) do update set kind = p_kind;
 end $$;
 
 -- admin only: clear every Used mark (the Reset button)
@@ -928,7 +928,7 @@ end $$;
 create or replace function public.purge_tickets(p_token text) returns void language plpgsql security definer set search_path = public as $$
 begin
   if not _admin(p_token) then raise exception 'Not allowed'; end if;
-  delete from tickets where true; delete from ticket_counters where true; delete from event_tables where true;
+  delete from tickets where true; delete from ticket_counters where true; delete from seating_tables where true;
 end $$;
 
 -- digital ticket pages (guests, no login) and shared ticket design
@@ -1002,7 +1002,10 @@ do $$ declare x text; missing text := ''; begin
   foreach x in array array['public.reserve_seq(text,text,integer)','public.purge_tickets(text)','public.delete_tickets(text,text[])','public.digital_ticket(text,text)','public.ticket_live(text,text)','public.ticket_heartbeat(text,text)','public.gate_scan(text,text,text,text,boolean)','public.table_issue(text,integer,text,integer,text)','public.table_set_kind(text,integer,text)','public._table_info(integer)','public._table_issue(integer,text,integer,text)','public.reset_scans(text)','public._gate(text)','public._admin(text)','public._staff(text)','public.request_ticket(text,text)','public.public_design()','public.save_design(text,jsonb)','public.app_login(text,text)','public.app_whoami(text)','public.app_logout(text)','public.staff_create(text,text,text,text)','public.staff_delete(text,text)','public.staff_password(text,text,text)'] loop
     if to_regprocedure(x) is null then missing := missing || x || ' '; end if;
   end loop;
-  if to_regclass('public.event_tables') is null then missing := missing || '[event_tables] '; end if;
+  if to_regclass('public.seating_tables') is null then missing := missing || '[seating_tables] '; end if;
+  if not exists (select 1 from information_schema.columns where table_schema='public' and table_name='seating_tables' and column_name='kind') then missing := missing || '[seating_tables.kind] '; end if;
+  if not exists (select 1 from information_schema.columns where table_schema='public' and table_name='gate_scans' and column_name='result') then missing := missing || '[gate_scans.result] '; end if;
+  if not exists (select 1 from information_schema.columns where table_schema='public' and table_name='ticket_heartbeats' and column_name='token') then missing := missing || '[ticket_heartbeats.token] '; end if;
   if to_regclass('public.gate_scans') is null or to_regclass('public.ticket_heartbeats') is null then missing := missing || '[tables] '; end if;
   if not exists (select 1 from pg_trigger where tgname = 'tickets_guard_trg' and not tgisinternal) then missing := missing || '[trigger] '; end if;
   if missing &lt;&gt; '' then raise exception 'SETUP INCOMPLETE, missing: %', missing; end if;
@@ -1318,7 +1321,7 @@ function app(){
     },
     get sample(){ return {number:{GEN:'GEN',VIP:'VIP',TABLE:'TABLE'}[this.pTier]+'-0001',tier:this.pTier,buyer:this.pName,code:'SAMPLE000000'}; },
     /* ---------- tables: 8 seats each ---------- */
-    async loadTables(){ if(!sb) return; try{ const r=await sb.from('event_tables').select('table_no,kind'); if(!r.error&&Array.isArray(r.data)) this.tablesMeta=r.data; }catch(e){} },
+    async loadTables(){ if(!sb) return; try{ const r=await sb.from('seating_tables').select('table_no,kind'); if(!r.error&&Array.isArray(r.data)) this.tablesMeta=r.data; }catch(e){} },
     tableInfo(no){
       const ts=this.tickets.filter(t=>t.tableId===no).sort((a,b)=>a.seatNo-b.seatNo), m=this.tablesMeta.find(x=>x.table_no===no),
         kind=m?m.kind:'full', issued=ts.length, seated=ts.filter(t=>t.status==='Used').length;
@@ -1752,7 +1755,7 @@ function app(){
         sb.channel(channelName)
           .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets' }, p => this.onRemote(p))
           .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, p => this.onUsers(p))
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'event_tables' }, () => this.loadTables())
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'seating_tables' }, () => this.loadTables())
           .subscribe(s => {
             if (s === 'SUBSCRIBED') { this.cloud = 'live'; if(this.rtSeen) this.syncNow(); this.rtSeen = true; }
             else if (['CLOSED', 'CHANNEL_ERROR', 'TIMED_OUT'].includes(s)) this.cloud = 'offline';
