@@ -53,6 +53,34 @@
 <body x-data="app()" x-init="init()" @pointermove.window="dragMove($event)" @pointerup.window="dragEnd()" @keydown.enter.window="if(result) nextScan()">
 <style x-text="`@page{size:${paper};margin:10mm}`"></style>
 
+  <!-- PUBLIC BUY PAGE: reached from the sales QR. Pick a tier, chat with the seller on WhatsApp. No account, no access to the system. -->
+  <section x-show="buy&&!guest" x-cloak class="min-h-screen bg-[#12151b] text-white px-4 py-8 ui">
+    <div class="mx-auto max-w-md space-y-5">
+      <div class="rounded-2xl bg-gradient-to-br from-[#5a0a0f] to-[#1b0b0e] p-6 text-center shadow-lg">
+        <p class="text-[11px] font-semibold uppercase tracking-[.25em] text-amber-300">Queens Events presents</p>
+        <h1 class="mt-2 text-3xl font-extrabold leading-tight" x-text="SALES.event"></h1>
+        <p class="mt-1 text-xl text-amber-200" x-text="SALES.sub"></p>
+        <p class="mt-4 text-sm text-white/80" x-text="SALES.date"></p>
+        <p class="text-sm text-white/80" x-text="SALES.venue"></p>
+      </div>
+      <div class="rounded-2xl bg-white/5 border border-white/10 p-5 space-y-3">
+        <h2 class="font-bold text-lg">Choose your ticket</h2>
+        <p class="text-xs text-white/60">Fill in your details, then tap a ticket type. WhatsApp opens with your request ready to send, and we reply with your ticket.</p>
+        <label class="block text-xs text-white/70">Your name<input x-model="buyForm.name" autocomplete="name" class="dinp mt-1" placeholder="Name"></label>
+        <label class="block text-xs text-white/70">Your WhatsApp number (so we can send your ticket)<input x-model="buyForm.phone" inputmode="tel" autocomplete="tel" class="dinp mt-1" placeholder="e.g. 0700 000 000"></label>
+        <label class="block text-xs text-white/70">How many tickets (GEN / VIP)<select x-model.number="buyForm.qty" class="dinp mt-1"><template x-for="n in 10" :key="n"><option :value="n" x-text="n"></option></template></select></label>
+        <p x-show="buyErr" x-text="buyErr" role="alert" class="text-sm text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2"></p>
+        <template x-for="tier in requestTiers" :key="tier.name">
+          <button type="button" @click="buyGo(tier.name)" class="w-full rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 active:bg-white/15 px-4 py-3 text-left flex items-center justify-between gap-3">
+            <span><span class="block font-bold text-lg" x-text="tierLabel(tier.name)"></span><span class="text-xs text-white/60" x-text="buyDesc[tier.name]"></span></span>
+            <span class="text-right"><span class="block font-semibold text-amber-300" x-text="formatUgx(tier.price)"></span><span class="text-xs text-emerald-300">Tap to request</span></span>
+          </button>
+        </template>
+      </div>
+      <p class="text-center text-sm text-white/70">Questions? WhatsApp <a class="underline text-amber-300" :href="'https://wa.me/'+SALES.phone" x-text="SALES.display"></a></p>
+    </div>
+  </section>
+
   <!-- PUBLIC TICKET REQUEST -->
   <section x-show="request&&!guest" x-cloak class="min-h-screen bg-stone-100 px-4 py-8 ui">
     <div class="mx-auto max-w-2xl space-y-5">
@@ -95,7 +123,7 @@
     </div>
   </section>
 
-  <header x-show="user&&!guest&&!request" x-cloak class="bg-[#1b2430] text-white ui">
+  <header x-show="user&&!guest&&!request&&!buy" x-cloak class="bg-[#1b2430] text-white ui">
   <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
     <h1 class="text-2xl tracking-tight">Gatekeeper</h1>
     <div class="flex items-center gap-2 ml-auto text-xs">
@@ -113,7 +141,7 @@
   </div>
 </header>
 
-<main x-show="user&&!guest" x-cloak class="max-w-6xl mx-auto px-4 py-6 ui">
+<main x-show="user&&!guest&&!buy" x-cloak class="max-w-6xl mx-auto px-4 py-6 ui">
 
 <!-- DESIGN -->
 <section x-show="can('design')&&tab==='design'" x-cloak class="dz rounded-2xl bg-[#0f1115] p-3 lg:p-4 grid lg:grid-cols-[1fr_370px] gap-4 text-stone-200">
@@ -1133,11 +1161,63 @@ select 'OK - Gatekeeper database is fully installed' as status;
       <button class="btn bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold py-2 px-4 shadow-2xs transition-colors" @click="clearAll()">⚠️ Purge Entire Ticket Registry</button>
     </div>
   </div>
+  <!-- Sales QR -->
+  <div class="card bg-white shadow-sm border border-stone-200 p-5 rounded-xl">
+    <div class="mb-3 pb-2 border-b border-stone-100"><h2 class="font-bold text-stone-800 text-base">Sales QR: buy tickets on WhatsApp</h2>
+      <p class="text-xs text-stone-500">This QR never changes. Anyone who scans it sees the concert details and the ticket tiers, with no access to the system. Each tap opens a WhatsApp chat with <span x-text="SALES.display"></span> that already says which tier they want.</p></div>
+    <div class="flex flex-wrap items-center gap-5">
+      <img :src="qrUrl(buyLink)" alt="Sales QR code" class="w-48 h-48 rounded-xl border border-stone-200 bg-white p-3">
+      <div class="flex-1 min-w-[220px] space-y-2">
+        <div class="text-xs break-all text-stone-500" x-text="buyLink"></div>
+        <div class="flex flex-wrap gap-2">
+          <button class="btn bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-2" @click="shareBuyQr()">Share on WhatsApp</button>
+          <a class="btn bg-white hover:bg-stone-100 text-stone-700 text-xs font-medium px-3 py-2 border border-stone-300" :href="qrUrl(buyLink)" download="buy-tickets-qr.png">Download QR</a>
+          <button class="btn bg-white hover:bg-stone-100 text-stone-700 text-xs font-medium px-3 py-2 border border-stone-300" @click="printBuyQr()">Print poster</button>
+          <button class="btn bg-white hover:bg-stone-100 text-stone-700 text-xs font-medium px-3 py-2 border border-stone-300" @click="copyBuyLink()">Copy link</button>
+          <a class="btn bg-white hover:bg-stone-100 text-stone-700 text-xs font-medium px-3 py-2 border border-stone-300" :href="buyLink" target="_blank" rel="noopener">Preview page</a>
+        </div>
+      </div>
+    </div>
+  </div>
 </section>
 </main>
 
+<!-- SELL REQUEST (staff): opened from the link in a buyer's WhatsApp message -->
+<div x-show="sell&&user&&can('tickets')" x-cloak class="fixed inset-0 z-[55] overflow-y-auto bg-black/60 p-4 ui">
+  <div class="mx-auto my-8 max-w-md rounded-2xl bg-white p-5 shadow-2xl space-y-3">
+    <div class="flex items-start justify-between gap-3"><h2 class="text-lg font-bold text-stone-800">Ticket request</h2><button class="text-stone-400 hover:text-stone-700 text-xl leading-none" @click="closeSell()" aria-label="Close">×</button></div>
+    <template x-if="sell">
+      <div class="space-y-3">
+        <div class="rounded-xl bg-stone-50 border border-stone-200 p-3 text-sm">
+          <div><span class="text-stone-500">Buyer:</span> <b x-text="sell.name||'(no name)'"></b></div>
+          <div><span class="text-stone-500">WhatsApp:</span> <b x-text="'+'+sell.phone"></b></div>
+          <div><span class="text-stone-500">Wants:</span> <b x-text="sell.tier==='TABLE'?'A full table (8 seats)':sell.qty+' x '+sell.tier"></b></div>
+        </div>
+        <template x-if="sell.sentOk"><div class="rounded-xl bg-emerald-50 border border-emerald-200 p-3 text-sm text-emerald-800">Sent and marked as shared: <span x-text="sell.last.join(', ')"></span>.</div></template>
+        <template x-if="sell.printedOk"><div class="rounded-xl bg-emerald-50 border border-emerald-200 p-3 text-sm text-emerald-800">Printed: <span x-text="sell.last.join(', ')"></span>.
+          <a class="mt-2 block text-center rounded-lg bg-emerald-600 text-white font-semibold py-2" :href="sellNotifyUrl" target="_blank" rel="noopener">Tell the buyer on WhatsApp</a></div></template>
+        <template x-if="!sell.sentOk&&!sell.printedOk">
+          <div class="space-y-2">
+            <div class="text-xs font-semibold uppercase tracking-wide text-stone-500">Ready to sell (not shared, not printed)</div>
+            <template x-if="sellList.length===0"><div class="rounded-xl bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800" x-text="'No unused '+(sell.tier==='TABLE'?'full table':sell.tier+' tickets')+' are available. Generate or issue more first.'"></div></template>
+            <template x-for="t in sellList" :key="t.number"><div class="flex justify-between rounded-lg border border-stone-200 px-3 py-2 text-sm"><span class="font-mono font-semibold" x-text="t.number"></span><span class="text-stone-500" x-text="t.tableId?'Table '+t.tableId+' · Seat '+t.seatNo:t.tier"></span></div></template>
+            <div x-show="sell.tier!=='TABLE'&&sellList.length&&sellList.length<sell.qty" class="text-xs text-amber-700" x-text="'Only '+sellList.length+' of '+sell.qty+' requested tickets are available.'"></div>
+            <div class="grid grid-cols-2 gap-2 pt-1">
+              <button class="btn bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5" :disabled="!sellList.length" @click="sellSend()">Send on WhatsApp</button>
+              <button class="btn-dark py-2.5 font-medium" :disabled="!sellList.length" @click="sellPrint()">Print</button>
+            </div>
+            <p class="text-[11px] text-stone-500">Send opens the buyer's WhatsApp chat with the ticket links. Tickets are marked shared or printed only after you confirm.</p>
+          </div>
+        </template>
+        <button class="w-full rounded-lg border border-stone-300 py-2 text-sm font-medium text-stone-700" @click="closeSell()">Close</button>
+      </div>
+    </template>
+  </div>
+</div>
+
 <!-- SCAN RESULT -->
-<div x-show="result" x-cloak class="fixed inset-0 z-50 flex flex-col items-center justify-center text-center text-white p-6 ui" :class="result&&result.ok?'bg-emerald-600':'bg-rose-700'" role="alert">
+<div x-show="result" x-cloak class="fixed inset-0 z-50 overflow-y-auto text-center text-white ui" :class="result&&result.ok?'bg-emerald-600':'bg-rose-700'" role="alert">
+ <div class="min-h-full flex flex-col items-center justify-center p-6 pb-32">
   <template x-if="result">
     <div>
       <div class="text-7xl mb-3" x-text="result.ok?'✓':'✕'"></div>
@@ -1162,11 +1242,14 @@ select 'OK - Gatekeeper database is fully installed' as status;
       </template>
     </div>
   </template>
-  <button @click="nextScan()" class="mt-10 bg-white text-stone-900 text-xl font-semibold rounded-xl px-10 py-4">Scan next ticket</button>
+ </div>
+ <div class="fixed bottom-0 inset-x-0 z-[60] flex justify-center px-4 pt-3" style="padding-bottom:max(1rem,env(safe-area-inset-bottom));background:linear-gradient(to top,rgba(0,0,0,.28),transparent)">
+  <button @click="nextScan()" class="w-full max-w-sm bg-white text-stone-900 text-xl font-semibold rounded-xl px-10 py-4 shadow-2xl">Scan next ticket</button>
+ </div>
 </div>
 
 <!-- LOGIN -->
-<div x-show="!user&&!guest" x-cloak class="fixed inset-0 z-[70] flex items-center justify-center p-4 ui" style="background:radial-gradient(1100px 600px at 15% 10%,rgba(56,189,248,.18),transparent),radial-gradient(900px 500px at 90% 95%,rgba(124,58,237,.2),transparent),#0f1115">
+<div x-show="!user&&!guest&&!request&&!buy" x-cloak class="fixed inset-0 z-[70] flex items-center justify-center p-4 ui" style="background:radial-gradient(1100px 600px at 15% 10%,rgba(56,189,248,.18),transparent),radial-gradient(900px 500px at 90% 95%,rgba(124,58,237,.2),transparent),#0f1115">
   <form @submit.prevent="login()" class="w-full max-w-sm rounded-2xl bg-white/[0.06] backdrop-blur border border-white/10 shadow-2xl p-7 space-y-5 text-white">
     <div class="text-center"><div class="text-4xl mb-2">🎟️</div><h1 class="text-2xl font-semibold tracking-tight">Gatekeeper</h1><p class="text-sm text-white/60 mt-1">Staff sign in</p></div>
     <label class="block text-xs text-white/70">Username<input x-model="lu" autocomplete="username" autocapitalize="none" required class="dinp mt-1"></label>
@@ -1220,6 +1303,9 @@ function app(){
   const SESS=(()=>{ try{ const x=JSON.parse(localStorage.getItem(SK)||'null'); if(!x||!x.username||!x.role||!x.token)return null; x.role=String(x.role).toLowerCase(); return ['admin','producer','gatekeeper'].includes(x.role)?x:null; }catch(e){ return null; } })();
   const GUEST=location.hash.startsWith('#/t/')?(()=>{ const ticketId=decodeURIComponent(location.hash.slice(4)).trim(); const dot=ticketId.lastIndexOf('.'); const rawNumber=dot>0?ticketId.slice(0,dot):ticketId; const number=rawNumber.toUpperCase().replace(/^(GEN|VIP|TABLE)-?(\d+)$/,(m,t,n)=>`${t}-${n.padStart(4,'0')}`); return /^(GEN|VIP|TABLE)-\d{4}$/.test(number)?{ticketId,number,code:dot>0?ticketId.slice(dot+1):'',salt:dot>0?ticketId.slice(dot+1):''}:null; })():null;
   const REQUEST=location.hash==='#/request';
+  const SALES={phone:'256771695510',display:'+256 771 695510',event:'Queen Florence Live in Concert',sub:'Legacy of a Queen',date:'Friday 22 January 2027',venue:'Front Page Hotel, Namasuba'};
+  const BUY=/^#\/buy/.test(location.hash);
+  const SELL=(()=>{ const m=location.hash.match(/^#\/sell\/(GEN|VIP|TABLE)\/(\d{9,15})(?:\/(\d{1,2}))?(?:\/(.*))?$/); if(!m) return null; let nm=''; try{ nm=decodeURIComponent(m[4]||''); }catch(e){} return {tier:m[1],phone:m[2],qty:Math.max(1,Math.min(10,parseInt(m[3],10)||1)),name:nm.slice(0,60),last:[],sentOk:false,printedOk:false}; })();
   const FONTS={'Montserrat':"Montserrat,system-ui,sans-serif",'Poppins':"Poppins,system-ui,sans-serif",'Inter':"Inter,system-ui,sans-serif",'Oswald':"Oswald,Impact,sans-serif",'Playfair Display':"'Playfair Display',Georgia,serif",'Cinzel':"Cinzel,Georgia,serif",'Space Grotesk':"'Space Grotesk',system-ui,sans-serif",'Monospace':"ui-monospace,Menlo,Consolas,monospace"};
   const T0=(label,x,y,size,color,weight,font,o)=>({label,x,y,size,color,weight,font,ls:0,align:'left',transform:'none',sh:1,shc:'#000000',show:true,...o});
   const defaultTpl=()=>({bg:'https://hebbkx1anhila5yf.public.blob.vercel-storage.com/qfp-Ml4ytytXTzMrBARws7YTF4Vupb3VAP.jpeg',logo:'',bgColor:'#5a0a0f',eventTitle:'Legacy of a Queen',eventOrganizer:'Queens Events presents',eventSub:'Queen Florence · Live in Concert',eventDate:'Friday 22 January 2027',eventVenue:'Front Page Hotel, Namasuba',eventContact:'Reservations: 0764733540 / 0752222294',eventTerms:'One-time entry · Copies are void · Lost or shared tickets are not replaceable',bgX:50,bgY:50,bgScale:1,aw:2,ah:1,radius:2,shadow:55,blur:0,bgOp:.72,
@@ -1262,7 +1348,7 @@ function app(){
         serial:{color:'#5b2a14',font:'Monospace',weight:700,align:'center',x:36,y:80,size:4.5,sh:0},qr:{x:66,y:16,size:28}}}
   };
   return {
-    tab:SESS?(SESS.role==='gatekeeper'?'gate':SESS.role==='producer'?'tickets':'design'):'design', user:SESS, guest:GUEST, request:REQUEST, gt:null, gErr:'', requestTiers:[{name:'GEN',price:50000},{name:'VIP',price:100000},{name:'TABLE',price:3000000}], requestTier:'GEN', requestForm:{name:'',phone:'',email:'',payment:'Mobile Money',paymentPhone:'',cardNumber:'',expiry:'',cvv:''}, requestBusy:false, requestMessage:'', requestOk:false, requestTicket:null, lu:'', lp:'', showPw:false, loginErr:'', loginBusy:false, staff:[], nu:'', np:'', nr:'gatekeeper', staffMsg:'', staffOk:true, appUrl:localStorage.getItem(AU)||'', cloud:'offline', cloudErr:'', pending:[], syncing:false, flushing:false, tickets:[], tpl:defaultTpl(), pTier:'VIP', pName:'Amina Nakato', dTab:'canvas', selKey:'title', view:'edit', guides:null, tilt:{rx:0,ry:0,gx:50,gy:50}, presets:PRESETS, fonts:FONTS,
+    tab:SESS?(SESS.role==='gatekeeper'?'gate':SESS.role==='producer'?'tickets':'design'):'design', user:SESS, guest:GUEST, request:REQUEST, buy:BUY, sell:SELL, SALES, buyForm:{name:'',phone:'',qty:1}, buyErr:'', buyDesc:{GEN:'General admission',VIP:'VIP area access',TABLE:'Full table of 8 seats'}, gt:null, gErr:'', requestTiers:[{name:'GEN',price:50000},{name:'VIP',price:100000},{name:'TABLE',price:3000000}], requestTier:'GEN', requestForm:{name:'',phone:'',email:'',payment:'Mobile Money',paymentPhone:'',cardNumber:'',expiry:'',cvv:''}, requestBusy:false, requestMessage:'', requestOk:false, requestTicket:null, lu:'', lp:'', showPw:false, loginErr:'', loginBusy:false, staff:[], nu:'', np:'', nr:'gatekeeper', staffMsg:'', staffOk:true, appUrl:localStorage.getItem(AU)||'', cloud:'offline', cloudErr:'', pending:[], syncing:false, flushing:false, tickets:[], tpl:defaultTpl(), pTier:'VIP', pName:'Amina Nakato', dTab:'canvas', selKey:'title', view:'edit', guides:null, tilt:{rx:0,ry:0,gx:50,gy:50}, presets:PRESETS, fonts:FONTS,
     tablesMeta:[], tbl:{no:'',kind:'full',qty:1,buyer:''}, tblBusy:false, tblOpen:null, tblAll:false,
     gTier:'GEN', gQty:10, gName:'', busy:false, q:'', fTier:'', fStatus:'', qView:'queue', sel:{},
   gState:'', gPayload:'', gSeconds:0, gTtlPercent:0, gOnline:true, gDevice:'', gTtl:30, gTimer:null, gHeartTimer:null, gRefreshTimer:null, gTokenTimer:null,
@@ -1356,6 +1442,54 @@ function app(){
     printTable(tb){ const l=tb.ts.filter(t=>this.printable(t)); if(!l.length){ alert('Nothing left to print on this table.'); return; } this.printTickets(l); },
     shareTable(tb){ const l=tb.ts.filter(t=>this.printable(t)); if(!l.length){ alert('Nothing left to share on this table.'); return; } this.shareSelected(l); },
     addSeat(tb){ this.tbl.no=tb.no; this.tbl.kind='shared'; this.tbl.qty=1; window.scrollTo({top:0,behavior:'smooth'}); },
+    /* ---------- sales QR, public buy page, seller flow ---------- */
+    baseUrl(){ return (this.appUrl||(/^https?:$/.test(location.protocol)?location.origin+location.pathname:'')).replace(/#.*$/,''); },
+    get buyLink(){ return this.baseUrl()+'#/buy'; },
+    normPhone(v){ let d=String(v||'').replace(/\D/g,''); if(d.startsWith('00')) d=d.slice(2); if(d.startsWith('0')) d='256'+d.slice(1); else if(d.length===9) d='256'+d; return d.length>=11&&d.length<=15?d:''; },
+    buyGo(tier){
+      const f=this.buyForm, phone=this.normPhone(f.phone), t=this.requestTiers.find(x=>x.name===tier); if(!t) return;
+      if(!phone){ this.buyErr='Please enter your WhatsApp number so we can send your ticket to you.'; return; }
+      this.buyErr='';
+      const qty=tier==='TABLE'?1:Math.max(1,Math.min(10,parseInt(f.qty,10)||1)), name=(f.name||'').trim().slice(0,60);
+      const what=tier==='TABLE'?'a full table (8 seats)':`${qty} ${tier} ticket${qty>1?'s':''}`;
+      const msg=`Hello, I would like to buy ${what} (${this.formatUgx(t.price*qty)}) for ${SALES.event}.\nName: ${name||'-'}\nMy WhatsApp: +${phone}\n\nSeller link: ${this.baseUrl()}#/sell/${tier}/${phone}/${qty}/${encodeURIComponent(name)}`;
+      location.href='https://wa.me/'+SALES.phone+'?text='+encodeURIComponent(msg);
+    },
+    async shareBuyQr(){
+      const url=this.buyLink;
+      try{
+        const blob=await (await fetch(this.qrUrl(url))).blob(), file=new File([blob],'buy-tickets-qr.png',{type:'image/png'});
+        if(navigator.canShare&&navigator.canShare({files:[file]})){ await navigator.share({files:[file],text:'Scan or tap to buy tickets: '+url}); return; }
+      }catch(e){ if(e&&e.name==='AbortError') return; }
+      window.open('https://wa.me/?text='+encodeURIComponent('Scan or tap to buy tickets: '+url),'_blank');
+    },
+    async copyBuyLink(){ try{ await navigator.clipboard.writeText(this.buyLink); alert('Link copied.'); }catch(e){ prompt('Copy this link:',this.buyLink); } },
+    printBuyQr(){
+      const w=window.open('','_blank'); if(!w){ alert('Allow pop-ups to print the poster.'); return; }
+      w.document.write(`<!doctype html><title>Buy tickets</title><style>body{font-family:Arial,sans-serif;text-align:center;margin:0;padding:24mm 10mm}h1{font-size:34px;margin:0 0 4px}h2{font-size:22px;font-weight:400;margin:0 0 18px}img{width:110mm;height:110mm}p{font-size:22px;margin:14px 0 0}</style><h1>${SALES.event}</h1><h2>${SALES.sub} · ${SALES.date} · ${SALES.venue}</h2><img src="${this.qrUrl(this.buyLink)}"><p><b>Scan to buy your ticket</b></p><p>WhatsApp ${SALES.display}</p><script>onload=()=>setTimeout(()=>print(),300)<\/script>`);
+      w.document.close();
+    },
+    get sellList(){
+      const s=this.sell; if(!s) return [];
+      const ok=t=>t&&t.tier===s.tier&&this.printable(t);
+      if(s.tier==='TABLE'){
+        const by={}; this.tickets.filter(t=>t.tier==='TABLE'&&t.tableId).forEach(t=>(by[t.tableId]=by[t.tableId]||[]).push(t));
+        for(const n of Object.keys(by).map(Number).sort((a,b)=>a-b)){ const l=by[n], m=this.tablesMeta.find(x=>x.table_no===n); if((m?m.kind:'full')==='full'&&l.length===8&&l.every(ok)) return l.sort((a,b)=>a.seatNo-b.seatNo); }
+        return [];
+      }
+      return this.tickets.filter(ok).sort((a,b)=>a.number.localeCompare(b.number)).slice(0,s.qty);
+    },
+    sellLabel(t){ return t.number+(t.tableId?` (Table ${t.tableId}, Seat ${t.seatNo})`:''); },
+    get sellNotifyUrl(){ const s=this.sell; if(!s) return '#'; return 'https://wa.me/'+s.phone+'?text='+encodeURIComponent(`Hello${s.name?' '+s.name:''}, your ${s.tier} ticket${s.last.length>1?'s are':' is'} ready: ${s.last.join(', ')}. Please collect it from us.`); },
+    closeSell(){ this.sell=null; history.replaceState(null,'',location.pathname+location.search); },
+    sellSend(){
+      const s=this.sell, list=this.sellList; if(!s||!list.length) return;
+      const links=list.map(t=>this.sellLabel(t)+': '+this.link(t)); if(links.some(x=>/: $/.test(x))) return;
+      const text=`Hello${s.name?' '+s.name:''}, ${list.length>1?'here are your tickets':'here is your ticket'} for ${SALES.event}. Open the link and keep the page open when you arrive at the gate. Do not share it with anyone.\n\n`+links.join('\n');
+      window.open('https://wa.me/'+s.phone+'?text='+encodeURIComponent(text),'_blank');
+      setTimeout(()=>{ if(confirm('Did you send the ticket to +'+s.phone+' on WhatsApp?\n\nOK = yes, mark as shared.\nCancel = no, keep it unshared.')){ s.last=list.map(t=>t.number); list.forEach(t=>this.markShared(t)); s.sentOk=true; } },600);
+    },
+    sellPrint(){ const l=this.sellList; if(l.length) this.printTickets(l); },
     printable(t){ return !!t&&!t.shared&&!t.printed&&t.status==='Unused'; },
     get skippedCount(){ return this.tickets.filter(t=>this.sel[t.number]&&!this.printable(t)).length; },
     dropSkipped(){ this.tickets.forEach(t=>{ if(this.sel[t.number]&&!this.printable(t)) delete this.sel[t.number]; }); },
@@ -1548,6 +1682,7 @@ function app(){
       setTimeout(()=>{ window.print(); setTimeout(()=>{
         if(confirm(`Did ${list.length} ticket${list.length>1?'s':''} print successfully?\n\nOK = yes, mark as printed.\nCancel = no, keep them in the print queue.`)){
           list.forEach(t=>{ t.printed=true; delete this.sel[t.number]; }); this.queue({op:'printed',numbers:list.map(t=>t.number)});
+          if(this.sell){ this.sell.last=list.map(t=>t.number); this.sell.printedOk=true; }
         }
       },400); },250);
     },
