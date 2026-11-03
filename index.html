@@ -65,7 +65,7 @@
       </div>
       <div class="rounded-2xl bg-white/5 border border-white/10 p-5 space-y-3">
         <h2 class="font-bold text-lg">Choose your ticket</h2>
-        <p class="text-xs text-white/60">Fill in your details, read the payment information, then tap Request on the ticket you want. WhatsApp opens with your request ready to send.</p>
+        <p class="text-xs text-white/60">Fill in your details, read the payment information below, then tap Request on the ticket you want. WhatsApp opens with your request ready to send.</p>
         <label class="block text-xs text-white/70">Your name<input x-model="buyForm.name" autocomplete="name" class="dinp mt-1" placeholder="Name"></label>
         <label class="block text-xs text-white/70">Your WhatsApp number (so we can send your ticket)<input x-model="buyForm.phone" inputmode="tel" autocomplete="tel" class="dinp mt-1" placeholder="e.g. 0700 000 000"></label>
         <div class="rounded-xl border border-amber-300/40 bg-amber-300/10 p-3 text-xs text-amber-100 space-y-1.5">
@@ -76,7 +76,6 @@
             <li><b>Full table:</b> you get all 8 seats once the full amount is paid. If you pay only part, you get only the seats that amount covers. The other seats stay reserved for you until you pay the balance, and may be given to someone else if it is not paid.</li>
             <li><b>Shared seat:</b> you pay per seat and sit at a table with other guests.</li>
           </ul>
-          <label class="flex items-start gap-2 pt-1 text-white"><input type="checkbox" x-model="buyAgree" class="mt-0.5"><span>I have read and understood the payment information.</span></label>
         </div>
         <p x-show="buyErr" x-text="buyErr" role="alert" class="text-sm text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2"></p>
         <template x-for="o in buyKinds" :key="o.k">
@@ -363,7 +362,11 @@
       <button class="btn-dark py-2.5 px-5 font-medium" @click="issueTable()" :disabled="tblBusy" x-text="tblBusy?'Working...':(tbl.kind==='full'?'Issue 8 tickets':'Issue seat(s)')"></button>
       <button class="btn bg-white hover:bg-stone-100 text-stone-700 text-xs font-medium px-3 py-2.5 border border-stone-300" @click="setTableKind()">Set table type only</button>
     </div>
-    <label class="mt-3 inline-flex items-center gap-2 text-xs text-stone-600"><input type="checkbox" x-model="tblAll" class="rounded border-stone-300"> Show all tables 1 to 70</label>
+    <div class="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-stone-600">
+      <label class="inline-flex items-center gap-2"><input type="checkbox" x-model="tblAll" class="rounded border-stone-300"> Show all tables 1 to 70</label>
+      <label class="inline-flex items-center gap-2"><input type="checkbox" x-model="tblShowAll" class="rounded border-stone-300"> Also show full / taken tables and seats</label>
+      <span class="font-semibold text-emerald-700" x-text="availSummary"></span>
+    </div>
     <div class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
       <template x-for="tb in tableList" :key="tb.no">
         <div class="rounded-xl border p-3" :class="tb.issued>=8?'border-emerald-300 bg-emerald-50':'border-stone-200 bg-stone-50'">
@@ -373,14 +376,14 @@
           <div class="text-sm font-semibold mt-1" x-text="tb.seated+'/8 seated · '+tb.issued+'/8 issued'"></div>
           <div class="h-1.5 rounded bg-stone-200 mt-1 overflow-hidden"><div class="h-full bg-emerald-500" :style="'width:'+(tb.seated/8*100)+'%'"></div></div>
           <div class="flex flex-wrap gap-1.5 mt-2">
-            <button class="btn bg-white text-xs px-2.5 py-1 border border-stone-300" @click="printTable(tb)" :disabled="!tb.ts.some(x=>printable(x)&&!x.holdNote)">Print table</button>
-            <button class="btn bg-white text-xs px-2.5 py-1 border border-sky-300 text-sky-700" @click="shareTable(tb)" :disabled="!tb.ts.some(x=>printable(x)&&!x.holdNote)">Share table</button>
+            <button class="btn bg-white text-xs px-2.5 py-1 border border-stone-300" @click="printTable(tb)" :disabled="!tb.ts.some(x=>printable(x)&&(tb.kind==='full'||!x.holdNote))">Print table</button>
+            <button class="btn bg-white text-xs px-2.5 py-1 border border-sky-300 text-sky-700" @click="shareTable(tb)" :disabled="!tb.ts.some(x=>printable(x)&&(tb.kind==='full'||!x.holdNote))">Share table</button>
             <button class="btn bg-white text-xs px-2.5 py-1 border border-stone-300" x-show="tb.kind==='shared'&&tb.issued<8" @click="addSeat(tb)">Add seat</button>
             <button class="btn bg-white text-xs px-2.5 py-1 border border-stone-300" @click="tblOpen=(tblOpen===tb.no?null:tb.no)" x-text="tblOpen===tb.no?'Hide seats':'Seats'"></button>
           </div>
           <div x-show="tblOpen===tb.no" class="mt-2 divide-y divide-stone-200 text-xs">
             <template x-for="st in tb.seats" :key="st.seat">
-              <div class="flex items-center gap-2 py-1.5">
+              <div x-show="tblShowAll||tblAll||!st.t||printable(st.t)" class="flex items-center gap-2 py-1.5">
                 <span class="w-12 font-semibold" x-text="'Seat '+st.seat"></span>
                 <template x-if="st.t"><div class="flex flex-1 flex-wrap items-center gap-1.5">
                   <span class="font-mono" x-text="st.t.number"></span>
@@ -590,7 +593,7 @@ create extension if not exists pgcrypto with schema extensions;
 -- 0. CLEANUP: drop EVERY overloaded copy of the app functions so PostgREST can never be ambiguous
 do $$ declare r record; begin
   for r in select p.oid::regprocedure as sig from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-    where n.nspname = 'public' and p.proname in ('reserve_seq','purge_tickets','delete_tickets','digital_ticket','ticket_live','ticket_heartbeat','gate_scan','table_issue','table_set_kind','table_hold','_table_issue','_table_info','reset_scans','_gate','request_ticket','public_design','save_design','app_login','app_whoami','app_logout','staff_create','staff_delete','staff_password','_admin','_staff')
+    where n.nspname = 'public' and p.proname in ('reserve_seq','purge_tickets','delete_tickets','digital_ticket','ticket_live','ticket_heartbeat','gate_scan','table_issue','table_set_kind','table_hold','table_dispatch','_table_issue','_table_info','reset_scans','_gate','request_ticket','public_design','save_design','app_login','app_whoami','app_logout','staff_create','staff_delete','staff_password','_admin','_staff')
   loop execute 'drop function if exists ' || r.sig || ' cascade'; end loop;
 end $$;
 
@@ -929,6 +932,34 @@ begin
     where number = any (p_numbers) and table_no is not null and status = 'Unused' and not shared and not printed;
 end $$;
 
+-- give out table seats atomically. 'check' only verifies the seats are still unsold; 'share' marks them shared and reserves the unpaid seats in the same step,
+-- so two devices can never give out the same seat and a part-paid table can never be sent in full by mistake.
+create or replace function public.table_dispatch(p_token text, p_numbers text[], p_mode text, p_hold text[], p_note text) returns json language plpgsql security definer set search_path = public, extensions as $$
+declare n text; v record; oks json[] := '{}'; bad text[] := '{}'; tok text;
+begin
+  if not _staff(p_token) then raise exception 'Not allowed'; end if;
+  if p_mode not in ('check', 'share') then raise exception 'Bad mode'; end if;
+  foreach n in array coalesce(p_numbers, '{}'::text[]) loop
+    select t.number, t.status, t.shared, t.printed into v from tickets t where t.number = n for update;
+    if found and v.status = 'Unused' and not v.shared and not v.printed then
+      if p_mode = 'share' then
+        tok := upper(encode(gen_random_bytes(12), 'hex'));
+        update tickets set shared = true, active_token = tok, token_updated_at = now() where number = n;
+        oks := oks || json_build_object('number', n, 'active_token', tok, 'token_updated_at', now());
+      else
+        oks := oks || json_build_object('number', n);
+      end if;
+    else
+      bad := bad || n;
+    end if;
+  end loop;
+  if p_mode = 'share' and coalesce(array_length(p_hold, 1), 0) &gt; 0 then
+    update tickets set hold_note = nullif(left(trim(coalesce(p_note, '')), 200), '')
+      where number = any (p_hold) and table_no is not null and status = 'Unused' and not shared and not printed;
+  end if;
+  return json_build_object('ok', to_json(oks), 'refused', to_json(bad));
+end $$;
+
 create or replace function public.table_set_kind(p_token text, p_table int, p_kind text) returns void language plpgsql security definer set search_path = public as $$
 begin
   if not _staff(p_token) then raise exception 'Not allowed'; end if;
@@ -1048,11 +1079,12 @@ grant execute on function public.staff_password(text,text,text) to anon, authent
 grant execute on function public.table_issue(text,integer,text,integer,text) to anon, authenticated;
 grant execute on function public.table_set_kind(text,integer,text) to anon, authenticated;
 grant execute on function public.table_hold(text,text[],text) to anon, authenticated;
+grant execute on function public.table_dispatch(text,text[],text,text[],text) to anon, authenticated;
 grant execute on function public._table_info(integer) to anon, authenticated;
 
 -- self-check: if anything is missing the WHOLE script is rolled back and this message says what
 do $$ declare x text; missing text := ''; begin
-  foreach x in array array['public.reserve_seq(text,text,integer)','public.purge_tickets(text)','public.delete_tickets(text,text[])','public.digital_ticket(text,text)','public.ticket_live(text,text)','public.ticket_heartbeat(text,text)','public.gate_scan(text,text,text,text,boolean)','public.table_issue(text,integer,text,integer,text)','public.table_set_kind(text,integer,text)','public.table_hold(text,text[],text)','public._table_info(integer)','public._table_issue(integer,text,integer,text)','public.reset_scans(text)','public._gate(text)','public._admin(text)','public._staff(text)','public.request_ticket(text,text)','public.public_design()','public.save_design(text,jsonb)','public.app_login(text,text)','public.app_whoami(text)','public.app_logout(text)','public.staff_create(text,text,text,text)','public.staff_delete(text,text)','public.staff_password(text,text,text)'] loop
+  foreach x in array array['public.reserve_seq(text,text,integer)','public.purge_tickets(text)','public.delete_tickets(text,text[])','public.digital_ticket(text,text)','public.ticket_live(text,text)','public.ticket_heartbeat(text,text)','public.gate_scan(text,text,text,text,boolean)','public.table_issue(text,integer,text,integer,text)','public.table_set_kind(text,integer,text)','public.table_hold(text,text[],text)','public.table_dispatch(text,text[],text,text[],text)','public._table_info(integer)','public._table_issue(integer,text,integer,text)','public.reset_scans(text)','public._gate(text)','public._admin(text)','public._staff(text)','public.request_ticket(text,text)','public.public_design()','public.save_design(text,jsonb)','public.app_login(text,text)','public.app_whoami(text)','public.app_logout(text)','public.staff_create(text,text,text,text)','public.staff_delete(text,text)','public.staff_password(text,text,text)'] loop
     if to_regprocedure(x) is null then missing := missing || x || ' '; end if;
   end loop;
   if to_regclass('public.seating_tables') is null then missing := missing || '[seating_tables] '; end if;
@@ -1213,10 +1245,15 @@ select 'OK - Gatekeeper database is fully installed' as status;
     <div class="flex items-start justify-between gap-3"><h2 class="text-lg font-bold text-stone-800">Ticket request</h2><button class="text-stone-400 hover:text-stone-700 text-xl leading-none" @click="closeSell()" aria-label="Close">×</button></div>
     <template x-if="sell">
       <div class="space-y-3">
-        <div class="rounded-xl bg-stone-50 border border-stone-200 p-3 text-sm">
+        <div x-show="!sell.manual" class="rounded-xl bg-stone-50 border border-stone-200 p-3 text-sm">
           <div><span class="text-stone-500">Buyer:</span> <b x-text="sell.name||'(no name)'"></b></div>
           <div><span class="text-stone-500">WhatsApp:</span> <b x-text="'+'+sell.phone"></b></div>
           <div><span class="text-stone-500">Wants:</span> <b x-text="sellWants"></b></div>
+        </div>
+        <div x-show="sell.manual" class="rounded-xl bg-stone-50 border border-stone-200 p-3 text-sm space-y-2">
+          <div class="font-semibold" x-text="sellWants"></div>
+          <label class="block text-xs text-stone-600">Buyer name (optional)<input class="inp mt-1" x-model="sell.name" placeholder="Name"></label>
+          <label class="block text-xs text-stone-600">Buyer WhatsApp (optional, e.g. 256700000000)<input class="inp mt-1" inputmode="tel" x-model="sell.phone" placeholder="Leave empty to pick the chat in WhatsApp"></label>
         </div>
         <template x-if="sell.sentOk"><div class="rounded-xl bg-emerald-50 border border-emerald-200 p-3 text-sm text-emerald-800">Sent and marked as shared: <span x-text="sell.last.join(', ')"></span>.</div></template>
         <template x-if="sell.printedOk"><div class="rounded-xl bg-emerald-50 border border-emerald-200 p-3 text-sm text-emerald-800">Printed: <span x-text="sell.last.join(', ')"></span>.
@@ -1224,9 +1261,11 @@ select 'OK - Gatekeeper database is fully installed' as status;
         <template x-if="!sell.sentOk&&!sell.printedOk">
           <div class="space-y-2">
             <template x-if="sell.tier==='FULL'"><div class="rounded-xl border border-amber-200 bg-amber-50 p-3 space-y-2">
+              <template x-if="!sell.manual&&sell.qty===1&&availFullTables.length"><label class="block text-xs text-amber-900">Table to give<select class="inp mt-1" x-model.number="sell.table" @change="sell.inited=false"><option value="0">Automatic (lowest free table)</option><template x-for="n in availFullTables" :key="n"><option :value="n" x-text="'Table '+n"></option></template></select></label></template>
               <div class="text-sm font-semibold text-amber-900" x-text="'Total due: '+formatUgx(fullPrice*sell.qty)"></div>
-              <label class="block text-xs text-amber-900">Amount paid so far (UGX)<input type="number" min="0" step="1000" class="inp mt-1" x-model.number="sell.paid" @input="sellApplyPaid()"></label>
-              <div class="text-xs text-amber-900" x-text="'Seats covered: '+sellChosen.length+' of '+sellList.length+'. Each seat is worth '+formatUgx(seatValue)+'.'+(sellChosen.length<sellList.length?' Unticked seats stay reserved for this buyer (not sold, not shared) until the balance of '+formatUgx(Math.max(0,fullPrice*sell.qty-(sell.paid||0)))+' is paid.':'')"></div>
+              <label class="block text-xs text-amber-900">Total paid so far (UGX)<input type="number" min="0" step="1000" class="inp mt-1" x-model.number="sell.paid" @input="sellApplyPaid()"></label>
+              <div class="flex gap-2"><button type="button" class="btn bg-white text-xs px-2.5 py-1 border border-amber-300 text-amber-900" @click="sellPaidFull()">Paid in full</button><button type="button" class="btn bg-white text-xs px-2.5 py-1 border border-amber-300 text-amber-900" @click="sellClear()">Untick all</button></div>
+              <div class="text-xs text-amber-900" x-text="'Seats covered: '+sellChosen.length+' of '+sellList.length+(sellSentBefore?' left ('+sellSentBefore+' already given out)':'')+'. Each seat is worth '+formatUgx(seatValue)+'.'+(sellChosen.length<sellList.length?' Unticked seats stay reserved for this buyer (not sold, not shared) until the balance of '+formatUgx(Math.max(0,fullPrice*sell.qty-(sell.paid||0)))+' is paid.':'')"></div>
             </div></template>
             <template x-if="sell.tier==='SEAT'"><div class="rounded-xl border border-sky-200 bg-sky-50 p-3 space-y-2">
               <label class="block text-xs text-sky-900">Shared table number<input type="number" min="1" max="999" class="inp mt-1" x-model.number="sell.table"></label>
@@ -1237,7 +1276,7 @@ select 'OK - Gatekeeper database is fully installed' as status;
             <template x-if="sell.tier!=='SEAT'&&sellList.length===0"><div class="rounded-xl bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800" x-text="'No unused '+(sell.tier==='FULL'?'full table':sell.tier+' tickets')+' is available. Generate or issue more first.'"></div></template>
             <template x-for="t in sellList" :key="t.number"><label class="flex items-center gap-2 rounded-lg border border-stone-200 px-3 py-2 text-sm">
               <input x-show="sell.tier==='FULL'" type="checkbox" class="rounded border-stone-300" :checked="!!sell.sel[t.number]" @change="toggleSellSeat(t,$event.target.checked)">
-              <span class="font-mono font-semibold" x-text="t.number"></span><span class="ml-auto text-stone-500" x-text="t.tableId?'Table '+t.tableId+' · Seat '+t.seatNo:t.tier"></span></label></template>
+              <span class="font-mono font-semibold" x-text="t.number"></span><span x-show="t.holdNote" class="text-[10px] text-amber-700">reserved</span><span class="ml-auto text-stone-500" x-text="t.tableId?'Table '+t.tableId+' · Seat '+t.seatNo:t.tier"></span></label></template>
             <div x-show="sell.tier==='GEN'||sell.tier==='VIP'" class="text-xs text-amber-700"><span x-show="sellList.length&&sellList.length<sell.qty" x-text="'Only '+sellList.length+' of '+sell.qty+' requested tickets are available.'"></span></div>
             <div class="grid grid-cols-2 gap-2 pt-1">
               <button class="btn bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5" :disabled="!sellReady||sell.busy" @click="sellSend()">Send on WhatsApp</button>
@@ -1386,7 +1425,7 @@ function app(){
   };
   return {
     tab:SESS?(SESS.role==='gatekeeper'?'gate':SESS.role==='producer'?'tickets':'design'):'design', user:SESS, guest:GUEST, request:REQUEST, buy:BUY, sell:SELL, SALES, buyForm:{name:'',phone:'',qty:1}, buyErr:'', buyAgree:false, buyQty:{GEN:1,VIP:1,FULL:1,SEAT:1}, buyKinds:[{k:'GEN',title:'GEN',desc:'General admission',per:'per ticket',qtyLabel:'Tickets',max:10},{k:'VIP',title:'VIP',desc:'VIP area access',per:'per ticket',qtyLabel:'Tickets',max:10},{k:'FULL',title:'TABLE · Full table',desc:'A whole table of 8 seats for one buyer',per:'per table',qtyLabel:'Tables',max:10},{k:'SEAT',title:'TABLE · Shared seat',desc:'Individual seats on a shared table with other guests',per:'per seat',qtyLabel:'Seats',max:8}], gt:null, gErr:'', requestTiers:[{name:'GEN',price:50000},{name:'VIP',price:100000},{name:'TABLE',price:3000000}], requestTier:'GEN', requestForm:{name:'',phone:'',email:'',payment:'Mobile Money',paymentPhone:'',cardNumber:'',expiry:'',cvv:''}, requestBusy:false, requestMessage:'', requestOk:false, requestTicket:null, lu:'', lp:'', showPw:false, loginErr:'', loginBusy:false, staff:[], nu:'', np:'', nr:'gatekeeper', staffMsg:'', staffOk:true, appUrl:localStorage.getItem(AU)||'', cloud:'offline', cloudErr:'', pending:[], syncing:false, flushing:false, tickets:[], tpl:defaultTpl(), pTier:'VIP', pName:'Amina Nakato', dTab:'canvas', selKey:'title', view:'edit', guides:null, tilt:{rx:0,ry:0,gx:50,gy:50}, presets:PRESETS, fonts:FONTS,
-    tablesMeta:[], tbl:{no:'',kind:'full',qty:1,buyer:''}, tblBusy:false, tblOpen:null, tblAll:false,
+    tablesMeta:[], tbl:{no:'',kind:'full',qty:1,buyer:''}, tblBusy:false, tblOpen:null, tblAll:false, tblShowAll:false,
     gTier:'GEN', gQty:10, gName:'', busy:false, q:'', fTier:'', fStatus:'', qView:'queue', sel:{},
   gState:'', gPayload:'', gSeconds:0, gTtlPercent:0, gOnline:true, gDevice:'', gTtl:30, gTimer:null, gHeartTimer:null, gRefreshTimer:null, gTokenTimer:null,
     perSheet:(()=>{try{const v=parseInt(localStorage.getItem('qf_perSheet'),10);return v>=1&&v<=12?v:3;}catch(e){return 3;}})(), paper:(()=>{try{return localStorage.getItem('qf_paper')==='letter'?'letter':'A4';}catch(e){return 'A4';}})(), printHTML:'', drag:null,
@@ -1449,12 +1488,17 @@ function app(){
       const ts=this.tickets.filter(t=>t.tableId===no).sort((a,b)=>a.seatNo-b.seatNo), m=this.tablesMeta.find(x=>x.table_no===no),
         kind=m?m.kind:'full', issued=ts.length, seated=ts.filter(t=>t.status==='Used').length;
       const status=issued>=8?(seated>=8?'Full: all 8 seated':'Full: all 8 issued'):issued===0?(kind==='shared'?'Shared table: available (0/8 issued)':'Not issued yet'):(kind==='shared'?`Available for sharing (${issued}/8 issued)`:'Incomplete full table');
-      return {no,kind,issued,seated,open:8-issued,status:ts.some(t=>t.holdNote)?status+' · '+ts.filter(t=>t.holdNote).length+' reserved':status,ts,seats:[1,2,3,4,5,6,7,8].map(n=>({seat:n,t:ts.find(x=>x.seatNo===n)||null}))};
+      return {no,kind,issued,seated,open:8-issued,status:ts.some(t=>t.holdNote)?status+' · '+ts.filter(t=>t.holdNote).length+' reserved':status,ts,avail:ts.filter(t=>this.printable(t)).length+(kind==='shared'?Math.max(0,8-issued):0),held:ts.filter(t=>t.holdNote).length,seats:[1,2,3,4,5,6,7,8].map(n=>({seat:n,t:ts.find(x=>x.seatNo===n)||null}))};
     },
     get tableList(){
       const nos=new Set(this.tablesMeta.map(x=>x.table_no)); this.tickets.forEach(t=>{ if(t.tableId) nos.add(t.tableId); });
       if(this.tblAll) for(let i=1;i<=70;i++) nos.add(i);
-      return [...nos].sort((a,b)=>a-b).map(n=>this.tableInfo(n));
+      return [...nos].sort((a,b)=>a-b).map(n=>this.tableInfo(n)).filter(tb=>this.tblShowAll||this.tblAll||tb.avail>0);
+    },
+    get availSummary(){
+      const all=[...new Set([...this.tablesMeta.map(m=>m.table_no),...this.tickets.filter(t=>t.tableId).map(t=>t.tableId)])].map(n=>this.tableInfo(n));
+      const full=all.filter(tb=>tb.kind==='full'&&tb.issued===8&&tb.ts.every(t=>this.printable(t)&&!t.holdNote)).length, seats=all.filter(tb=>tb.kind==='shared').reduce((a,tb)=>a+tb.avail,0), held=all.reduce((a,tb)=>a+tb.held,0);
+      return `Available now: ${full} full table${full===1?'':'s'} · ${seats} shared seat${seats===1?'':'s'}`+(held?` · ${held} reserved seat${held===1?'':'s'}`:'');
     },
     get tableSummary(){ const ts=this.tickets.filter(t=>t.tableId); return `${new Set(ts.map(t=>t.tableId)).size} tables · ${ts.filter(t=>t.status==='Used').length}/${ts.length} seated`; },
     async issueTable(){
@@ -1476,8 +1520,8 @@ function app(){
       try{ const r=await sb.rpc('table_set_kind',{p_token:this.user.token,p_table:no,p_kind:this.tbl.kind}); if(r.error) throw r.error; await this.loadTables(); this.tblOpen=no; }
       catch(e){ alert('Could not set table type: '+(e.message||'')); }
     },
-    printTable(tb){ const l=tb.ts.filter(t=>this.printable(t)&&!t.holdNote); if(!l.length){ alert('Nothing left to print on this table.'); return; } this.printTickets(l); },
-    shareTable(tb){ const l=tb.ts.filter(t=>this.printable(t)&&!t.holdNote); if(!l.length){ alert('Nothing left to share on this table.'); return; } this.shareSelected(l); },
+    printTable(tb){ if(tb.kind==='full'){ this.openTableSale(tb); return; } const l=tb.ts.filter(t=>this.printable(t)&&!t.holdNote); if(!l.length){ alert('Nothing left to print on this table.'); return; } this.printTickets(l); },
+    shareTable(tb){ if(tb.kind==='full'){ this.openTableSale(tb); return; } const l=tb.ts.filter(t=>this.printable(t)&&!t.holdNote); if(!l.length){ alert('Nothing left to share on this table.'); return; } this.shareSelected(l); },
     addSeat(tb){ this.tbl.no=tb.no; this.tbl.kind='shared'; this.tbl.qty=1; window.scrollTo({top:0,behavior:'smooth'}); },
     /* ---------- sales QR, public buy page, seller flow ---------- */
     baseUrl(){ return (this.appUrl||(/^https?:$/.test(location.protocol)?location.origin+location.pathname:'')).replace(/#.*$/,''); },
@@ -1489,7 +1533,6 @@ function app(){
     buyGo(kind){
       const f=this.buyForm, phone=this.normPhone(f.phone);
       if(!phone){ this.buyErr='Please enter your WhatsApp number so we can send your ticket to you.'; return; }
-      if(!this.buyAgree){ this.buyErr='Please tick the box to confirm you have read the payment information.'; return; }
       this.buyErr='';
       const qty=Math.max(1,Math.min(kind==='SEAT'?8:10,parseInt(this.buyQty[kind],10)||1)), name=(f.name||'').trim().slice(0,60), total=this.buyPrice(kind)*qty;
       const what=kind==='FULL'?`${qty} full table${qty>1?'s':''} (${qty*8} seats)`:kind==='SEAT'?`${qty} seat${qty>1?'s':''} on a shared table`:`${qty} ${kind} ticket${qty>1?'s':''}`;
@@ -1512,30 +1555,42 @@ function app(){
       w.document.write(`<!doctype html><title>Buy tickets</title><style>body{font-family:Arial,sans-serif;text-align:center;margin:0;padding:24mm 10mm}h1{font-size:34px;margin:0 0 4px}h2{font-size:22px;font-weight:400;margin:0 0 18px}img{width:110mm;height:110mm}p{font-size:22px;margin:14px 0 0}</style><h1>${SALES.event}</h1><h2>${SALES.sub} · ${SALES.date} · ${SALES.venue}</h2><img src="${this.qrUrl(this.buyLink)}"><p><b>Scan to buy your ticket</b></p><p>WhatsApp ${SALES.display}</p><script>onload=()=>setTimeout(()=>print(),300)<\/script>`);
       w.document.close();
     },
-    get sellWants(){ const s=this.sell; if(!s) return ''; return s.tier==='FULL'?`${s.qty} full table${s.qty>1?'s':''} (${s.qty*8} seats)`:s.tier==='SEAT'?`${s.qty} seat${s.qty>1?'s':''} on a shared table`:`${s.qty} x ${s.tier}`; },
+    get sellWants(){ const s=this.sell; if(!s) return ''; if(s.manual) return `Table ${s.table}: ${this.sellList.length} seat${this.sellList.length===1?'':'s'} not yet given out`; return s.tier==='FULL'?`${s.qty} full table${s.qty>1?'s':''} (${s.qty*8} seats)`:s.tier==='SEAT'?`${s.qty} seat${s.qty>1?'s':''} on a shared table`:`${s.qty} x ${s.tier}`; },
+    get availFullTables(){
+      const by={}; this.tickets.filter(t=>t.tier==='TABLE'&&t.tableId).forEach(t=>(by[t.tableId]=by[t.tableId]||[]).push(t));
+      return Object.keys(by).map(Number).sort((a,b)=>a-b).filter(n=>{ const l=by[n], m=this.tablesMeta.find(x=>x.table_no===n); return (m?m.kind:'full')==='full'&&l.length===8&&l.every(t=>this.printable(t)&&!t.holdNote); });
+    },
     get sellList(){
       const s=this.sell; if(!s) return [];
       const ok=t=>t&&this.printable(t)&&!t.holdNote;
       if(s.tier==='FULL'){
-        const by={}; this.tickets.filter(t=>t.tier==='TABLE'&&t.tableId).forEach(t=>(by[t.tableId]=by[t.tableId]||[]).push(t));
-        const out=[];
-        for(const n of Object.keys(by).map(Number).sort((a,b)=>a-b)){ const l=by[n], m=this.tablesMeta.find(x=>x.table_no===n); if((m?m.kind:'full')==='full'&&l.length===8&&l.every(ok)){ out.push(...l.sort((a,b)=>a.seatNo-b.seatNo)); if(out.length>=s.qty*8) break; } }
+        if(s.manual) return this.tickets.filter(t=>t.tableId===s.table&&this.printable(t)).sort((a,b)=>a.seatNo-b.seatNo);
+        const av=this.availFullTables, pick=(s.table&&av.includes(s.table))?[s.table]:av, out=[];
+        for(const n of pick){ out.push(...this.tickets.filter(t=>t.tableId===n).sort((a,b)=>a.seatNo-b.seatNo)); if(out.length>=s.qty*8) break; }
         return out;
       }
       if(s.tier==='SEAT') return this.seatPlan.ok?this.seatPlan.existing:[];
       return this.tickets.filter(t=>t.tier===s.tier&&!t.tableId&&ok(t)).sort((a,b)=>a.number.localeCompare(b.number)).slice(0,s.qty);
     },
+    get sellSentBefore(){ const s=this.sell; return s&&s.manual?Math.max(0,8-this.sellList.length):0; },
     get sellChosen(){ const s=this.sell; if(!s) return []; return s.tier==='FULL'?this.sellList.filter(t=>s.sel[t.number]):this.sellList; },
     get sellReady(){ const s=this.sell; if(!s) return false; return s.tier==='SEAT'?this.seatPlan.ok:this.sellChosen.length>0; },
     sellLabel(t){ return t.number+(t.tableId?` (Table ${t.tableId}, Seat ${t.seatNo})`:''); },
-    get sellNotifyUrl(){ const s=this.sell; if(!s) return '#'; return 'https://wa.me/'+s.phone+'?text='+encodeURIComponent(`Hello${s.name?' '+s.name:''}, your ticket${s.last.length>1?'s are':' is'} ready: ${s.last.join(', ')}. Please collect it from us.`); },
+    get sellNotifyUrl(){ const s=this.sell; if(!s) return '#'; return 'https://wa.me/'+(s.phone||'')+'?text='+encodeURIComponent(`Hello${s.name?' '+s.name:''}, your ticket${s.last.length>1?'s are':' is'} ready: ${s.last.join(', ')}. Please collect it from us.`); },
     closeSell(){ this.sell=null; history.replaceState(null,'',location.pathname+location.search); },
+    openTableSale(tb){
+      if(!this.can('tickets')) return;
+      if(!tb.ts.some(t=>this.printable(t))){ alert('Nothing is left to give out on this table.'); return; }
+      this.sell={tier:'FULL',manual:true,table:tb.no,phone:'',name:'',qty:1,last:[],rest:[],holdNote:'',sentOk:false,printedOk:false,inited:true,paid:0,sel:{},tableSet:true,busy:false};
+    },
     sellEnsure(){
-      const s=this.sell; if(!s) return;
+      const s=this.sell; if(!s||s.manual) return;
       if(s.tier==='FULL'&&!s.inited){ const l=this.sellList; if(l.length){ s.paid=this.fullPrice*s.qty; s.sel=Object.fromEntries(l.map(t=>[t.number,true])); s.inited=true; } }
       if(s.tier==='SEAT'&&!s.tableSet&&(this.cloud==='live'||this.tickets.length)){ s.table=this.seatSuggest(s.qty); s.tableSet=true; }
     },
-    sellApplyPaid(){ const s=this.sell; if(!s) return; const n=Math.floor((Number(s.paid)||0)/this.seatValue); s.sel=Object.fromEntries(this.sellList.map((t,i)=>[t.number,i<n])); },
+    sellApplyPaid(){ const s=this.sell; if(!s) return; const n=Math.max(0,Math.floor((Number(s.paid)||0)/this.seatValue)-this.sellSentBefore); s.sel=Object.fromEntries(this.sellList.map((t,i)=>[t.number,i<n])); },
+    sellPaidFull(){ const s=this.sell; if(!s) return; s.paid=this.fullPrice*(s.manual?1:s.qty); s.sel=Object.fromEntries(this.sellList.map(t=>[t.number,true])); },
+    sellClear(){ const s=this.sell; if(!s) return; s.paid=0; s.sel={}; },
     toggleSellSeat(t,v){ const s=this.sell; s.sel={...s.sel,[t.number]:v}; },
     seatSuggest(n){
       let best=null;
@@ -1571,21 +1626,42 @@ function app(){
       }
       return out;
     },
-    sellNote(){ const s=this.sell, bal=Math.max(0,this.fullPrice*s.qty-(Number(s.paid)||0)); return `Reserved for ${s.name||'buyer'} +${s.phone}${bal?' · balance '+this.formatUgx(bal):''}`; },
+    sellNote(){ const s=this.sell, bal=Math.max(0,this.fullPrice*(s.manual?1:s.qty)-(Number(s.paid)||0)); return `Reserved for ${s.name||'buyer'}${s.phone?' +'+s.phone:''}${bal?' · balance '+this.formatUgx(bal):''}`; },
     async holdSeats(list,note){
       if(!list.length||!sb||!this.user) return;
       try{ const r=await sb.rpc('table_hold',{p_token:this.user.token,p_numbers:list.map(t=>t.number),p_note:note}); if(!r.error) list.forEach(t=>{ t.holdNote=note||''; }); }catch(e){}
     },
     async releaseHold(t){ if(!confirm('Release the reservation on '+t.number+'? It becomes a normal unsold ticket again.')) return; await this.holdSeats([t],''); },
+    async dispatchShare(list,rest,note,mode){
+      const r=await sb.rpc('table_dispatch',{p_token:this.user.token,p_numbers:list.map(t=>t.number),p_mode:mode,p_hold:rest.map(t=>t.number),p_note:note||''});
+      if(r.error||!r.data) throw (r.error||new Error('empty'));
+      return r.data;
+    },
     async sellSend(){
       const s=this.sell; if(!s||s.busy||!this.sellReady) return; s.busy=true;
       try{
         const rest=s.tier==='FULL'?this.sellList.filter(t=>!s.sel[t.number]):[], note=rest.length?this.sellNote():'';
         const list=await this.sellResolve(); if(!list.length) return;
+        const server=s.tier==='FULL'&&!!sb;
+        if(server){
+          try{ const c=await this.dispatchShare(list,[],'','check'); if((c.refused||[]).length){ alert('These seats were already given out from another device: '+c.refused.join(', ')+'.\n\nNothing was sent. Close this panel and open it again.'); return; } }
+          catch(e){ alert('Could not check the seats with the server. Nothing was sent.'); return; }
+        }
         const links=list.map(t=>this.sellLabel(t)+': '+this.link(t)); if(links.some(x=>/: $/.test(x))) return;
         const text=`Hello${s.name?' '+s.name:''}, ${list.length>1?'here are your tickets':'here is your ticket'} for ${SALES.event}. Open the link and keep the page open when you arrive at the gate. Do not share it with anyone.\n\n`+links.join('\n');
-        window.open('https://wa.me/'+s.phone+'?text='+encodeURIComponent(text),'_blank');
-        setTimeout(async()=>{ if(confirm('Did you send the ticket to +'+s.phone+' on WhatsApp?\n\nOK = yes, mark as shared.\nCancel = no, keep it unshared.')){ s.last=list.map(t=>t.number); list.forEach(t=>this.markShared(t)); s.sentOk=true; await this.holdSeats(rest,note); } },600);
+        window.open('https://wa.me/'+(s.phone||'')+'?text='+encodeURIComponent(text),'_blank');
+        setTimeout(async()=>{
+          if(!confirm('Did you send the ticket'+(s.phone?' to +'+s.phone:'')+' on WhatsApp?\n\nOK = yes, mark as shared.\nCancel = no, keep it unshared.')) return;
+          if(server){
+            try{
+              const d=await this.dispatchShare(list,rest,note,'share');
+              (d.ok||[]).forEach(o=>{ const t=this.tickets.find(x=>x.number===o.number); if(t){ t.shared=true; t.activeToken=o.active_token; t.tokenUpdatedAt=o.token_updated_at; t.holdNote=''; delete this.sel[t.number]; } });
+              rest.forEach(t=>{ if(!t.shared) t.holdNote=note; });
+              s.last=(d.ok||[]).map(o=>o.number); s.sentOk=true;
+              if((d.refused||[]).length) alert('Warning: '+d.refused.join(', ')+' had already been given out from another device. Check with the buyer.');
+            }catch(e){ alert('The tickets were sent, but the server could not record it. Open the Table Manager and mark them before selling again.'); }
+          }else{ s.last=list.map(t=>t.number); list.forEach(t=>this.markShared(t)); s.sentOk=true; await this.holdSeats(rest,note); }
+        },600);
       } finally { s.busy=false; }
     },
     async sellPrint(){
